@@ -1,8 +1,8 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Upload, Camera, X, Check,
-  Search, Loader2, Image as ImageIcon,
+  Search, Loader2, Image as ImageIcon, RefreshCw,
 } from 'lucide-react';
 import type { ImageAnalysisState } from '../types';
 import { analyzeMedicineImage, isGeminiConfigured, getGeminiMode } from '../services/GIMINI';
@@ -18,28 +18,83 @@ const INITIAL_STATE: ImageAnalysisState = {
   previewUrl: null,
 };
 
+type InputMode = 'upload' | 'camera';
+type CameraStatus =
+  | 'idle'
+  | 'requesting'
+  | 'active'
+  | 'captured'
+  | 'denied'
+  | 'unavailable'
+  | 'error';
+
 export function ImageAnalysisPage() {
   const navigate = useNavigate();
+
+  // وضع الإدخال: رفع ملف أو كاميرا
+  const [inputMode, setInputMode] = useState<InputMode>('upload');
+
+  // حالة رفع الملف
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<ImageAnalysisState>(INITIAL_STATE);
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
+  // حالة الكاميرا
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
+  const [cameraError, setCameraError] = useState<string>('');
+
+  // إيقاف الكاميرا عند الخروج من الصفحة أو تغيير الوضع
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraStatus('idle');
+    setCameraError('');
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, [stopCamera]);
+
+  const handleSwitchMode = (mode: InputMode) => {
+    if (mode !== inputMode) {
+      stopCamera();
+      setCameraStatus('idle');
+      setCameraError('');
+      // إعادة تعيين الملف والنتائج عند تبديل الوضع
+      if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+      setFile(null);
+      setState(INITIAL_STATE);
+      setInputMode(mode);
+    }
+  };
+
+  // ---- وضع رفع الملف ----
   const handleFile = useCallback((selectedFile: File) => {
     const validation = validateImageFile(selectedFile);
     if (!validation.valid) {
       setState({ ...INITIAL_STATE, error: validation.error });
       return;
     }
+    if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
     const url = URL.createObjectURL(selectedFile);
     setFile(selectedFile);
     setState({ ...INITIAL_STATE, previewUrl: url });
-  }, []);
+  }, [state.previewUrl]);
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) handleFile(selectedFile);
-
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -50,13 +105,75 @@ export function ImageAnalysisPage() {
     if (droppedFile) handleFile(droppedFile);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(true);
+  // ---- وضع الكاميرا ----
+  const startCamera = async () => {
+    setCameraStatus('requesting');
+    setCameraError('');
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraStatus('unavailable');
+        setCameraError('الكاميرا غير مدعومة في هذا المتصفح أو الجهاز.');
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCameraStatus('active');
+    } catch (err) {
+      const error = err as Error;
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        setCameraStatus('denied');
+        setCameraError('تم رفض إذن الكاميرا. يرجى السماح بالوصول من إعدادات المتصفح ثم المحاولة مرة أخرى.');
+      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+        setCameraStatus('unavailable');
+        setCameraError('لا توجد كاميرا متاحة على هذا الجهاز.');
+      } else {
+        setCameraStatus('error');
+        setCameraError('تعذّر فتح الكاميرا. يرجى المحاولة مرة أخرى.');
+      }
+    }
   };
 
-  const handleDragLeave = () => setDragOver(false);
+  const capturePhoto = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
 
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        setCameraStatus('error');
+        setCameraError('تعذّر التقاط الصورة. يرجى المحاولة مرة أخرى.');
+        return;
+      }
+      const capturedFile = new File([blob], `camera-${Date.now()}.jpg`, { type: 'image/jpeg' });
+      stopCamera();
+      setCameraStatus('captured');
+      handleFile(capturedFile);
+    }, 'image/jpeg', 0.92);
+  };
+
+  const retakePhoto = () => {
+    if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+    setFile(null);
+    setState(INITIAL_STATE);
+    setCameraStatus('idle');
+    setCameraError('');
+  };
+
+  // ---- تحليل الصورة (مشترك) ----
   const handleAnalyze = async () => {
     if (!file) return;
     setState((prev) => ({ ...prev, status: 'loading', error: null }));
@@ -67,15 +184,18 @@ export function ImageAnalysisPage() {
       setState((prev) => ({
         ...prev,
         status: 'error',
-        error: 'حدث خطأ أثناء التحليل. يرجى المحاولة مرة أخرى.',
+        error: 'تعذّر تحليل الصورة. يرجى المحاولة مرة أخرى.',
       }));
     }
   };
 
   const handleReset = () => {
+    stopCamera();
     if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
     setFile(null);
     setState(INITIAL_STATE);
+    setCameraStatus('idle');
+    setCameraError('');
   };
 
   const handleStartSearch = () => {
@@ -94,6 +214,8 @@ export function ImageAnalysisPage() {
       ? { variant: 'warning' as const, text: 'الذكاء الاصطناعي مفعّل — وضع تطوير محلي (المفتاح مكشوف في الـ bundle، لا تنشر هكذا)' }
       : { variant: 'warning' as const, text: 'وضع تجريبي — أضف VITE_AI_API_ENDPOINT في .env للإنتاج' };
 
+  const hasImage = !!state.previewUrl;
+
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
 
@@ -103,7 +225,7 @@ export function ImageAnalysisPage() {
         </div>
         <h1 className="text-3xl font-bold text-text-main mb-3">تحليل صورة الدواء</h1>
         <p className="text-text-secondary max-w-lg mx-auto leading-relaxed">
-          ارفع صورة واضحة لعبوة الدواء أو الوصفة الطبية، وسنحاول استخراج اسم الدواء
+          ارفع صورة واضحة لعبوة الدواء أو التقطها بالكاميرا، وسنحاول استخراج اسم الدواء
           والمعلومات الأساسية منها.
         </p>
       </div>
@@ -114,99 +236,284 @@ export function ImageAnalysisPage() {
         </p>
       </Alert>
 
-      {!state.previewUrl ? (
-        <div
-          className={`border-2 border-dashed rounded-card p-12 text-center transition-all cursor-pointer ${
-            dragOver
-              ? 'border-primary bg-primary-light/30'
-              : 'border-secondary bg-bg-surface hover:border-primary hover:bg-primary-light/10'
-          }`}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onClick={() => fileInputRef.current?.click()}
-          role="button"
-          aria-label="منطقة رفع الصور"
-        >
-          <Upload size={48} className="text-secondary mx-auto mb-4" />
-          <p className="text-lg font-semibold text-text-main mb-2">
-            اسحب وأفلت الصورة هنا
-          </p>
-          <p className="text-text-secondary text-sm mb-4">أو اضغط لاختيار صورة</p>
-          <div className="flex flex-wrap justify-center gap-2">
-            {IMAGE_UPLOAD.ALLOWED_EXTENSIONS.map((ext) => (
-              <span
-                key={ext}
-                className="px-3 py-1 bg-border-light text-text-secondary text-xs rounded-full"
-              >
-                {ext}
-              </span>
-            ))}
-          </div>
-          <p className="text-xs text-text-secondary mt-3">
-            الحد الأقصى لحجم الملف: {IMAGE_UPLOAD.MAX_SIZE_LABEL}
-          </p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={IMAGE_UPLOAD.ALLOWED_TYPES.join(',')}
-            onChange={handleFileInput}
-            className="hidden"
-            aria-label="اختر صورة"
-          />
+      {/* تبديل وضع الإدخال */}
+      {!hasImage && cameraStatus !== 'active' && (
+        <div className="flex gap-2 mb-6 p-1 bg-bg-page rounded-card border border-border-default">
+          <button
+            onClick={() => handleSwitchMode('upload')}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-btn text-sm font-semibold transition-colors ${
+              inputMode === 'upload'
+                ? 'bg-primary text-white shadow'
+                : 'text-text-secondary hover:text-text-main'
+            }`}
+          >
+            <Upload size={16} />
+            رفع صورة
+          </button>
+          <button
+            onClick={() => handleSwitchMode('camera')}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-btn text-sm font-semibold transition-colors ${
+              inputMode === 'camera'
+                ? 'bg-primary text-white shadow'
+                : 'text-text-secondary hover:text-text-main'
+            }`}
+          >
+            <Camera size={16} />
+            التقاط بالكاميرا
+          </button>
         </div>
-      ) : (
-        <div className="bg-bg-surface border border-border-default rounded-card p-6 shadow-card">
+      )}
 
-          <div className="relative mb-5">
-            <img
-              src={state.previewUrl}
-              alt="صورة الدواء المرفوعة"
-              className="w-full max-h-64 object-contain rounded-card bg-bg-page"
-            />
-            <button
-              onClick={handleReset}
-              className="absolute top-3 end-3 w-8 h-8 rounded-full bg-white border border-border-default flex items-center justify-center hover:bg-danger-bg hover:text-danger-text transition-colors shadow"
-              aria-label="إزالة الصورة"
+      {/* ====== وضع رفع الصورة ====== */}
+      {inputMode === 'upload' && (
+        <>
+          {!hasImage ? (
+            <div
+              className={`border-2 border-dashed rounded-card p-12 text-center transition-all cursor-pointer ${
+                dragOver
+                  ? 'border-primary bg-primary-light/30'
+                  : 'border-secondary bg-bg-surface hover:border-primary hover:bg-primary-light/10'
+              }`}
+              onDrop={handleDrop}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onClick={() => fileInputRef.current?.click()}
+              role="button"
+              aria-label="منطقة رفع الصور"
             >
-              <X size={16} />
-            </button>
-          </div>
+              <Upload size={48} className="text-secondary mx-auto mb-4" />
+              <p className="text-lg font-semibold text-text-main mb-2">
+                اسحب وأفلت الصورة هنا
+              </p>
+              <p className="text-text-secondary text-sm mb-4">أو اضغط لاختيار صورة من جهازك</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {IMAGE_UPLOAD.ALLOWED_EXTENSIONS.map((ext) => (
+                  <span
+                    key={ext}
+                    className="px-3 py-1 bg-border-light text-text-secondary text-xs rounded-full"
+                  >
+                    {ext}
+                  </span>
+                ))}
+              </div>
+              <p className="text-xs text-text-secondary mt-3">
+                الحد الأقصى لحجم الملف: {IMAGE_UPLOAD.MAX_SIZE_LABEL}
+              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={IMAGE_UPLOAD.ALLOWED_TYPES.join(',')}
+                onChange={handleFileInput}
+                className="hidden"
+                aria-label="اختر صورة"
+              />
+            </div>
+          ) : (
+            <div className="bg-bg-surface border border-border-default rounded-card p-6 shadow-card">
+              <div className="relative mb-5">
+                <img
+                  src={state.previewUrl!}
+                  alt="صورة الدواء المرفوعة"
+                  className="w-full max-h-64 object-contain rounded-card bg-bg-page"
+                />
+                <button
+                  onClick={handleReset}
+                  className="absolute top-3 end-3 w-8 h-8 rounded-full bg-white border border-border-default flex items-center justify-center hover:bg-danger-bg hover:text-danger-text transition-colors shadow"
+                  aria-label="إزالة الصورة"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              {file && (
+                <div className="flex items-center gap-2 text-sm text-text-secondary mb-4 p-3 bg-bg-page rounded-card">
+                  <ImageIcon size={16} />
+                  <span className="flex-1 truncate">{file.name}</span>
+                  <span>{(file.size / 1024).toFixed(0)} KB</span>
+                </div>
+              )}
+              {state.status === 'idle' && (
+                <Button onClick={handleAnalyze} size="lg" className="w-full" icon={<Search size={18} />}>
+                  تحليل الصورة
+                </Button>
+              )}
+              {state.status === 'loading' && (
+                <div className="flex flex-col items-center gap-3 py-6">
+                  <Loader2 size={36} className="text-primary animate-spin" />
+                  <p className="text-text-secondary text-sm">جارٍ تحليل الصورة...</p>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
 
-          {file && (
-            <div className="flex items-center gap-2 text-sm text-text-secondary mb-4 p-3 bg-bg-page rounded-card">
-              <ImageIcon size={16} />
-              <span className="flex-1 truncate">{file.name}</span>
-              <span>{(file.size / 1024).toFixed(0)} KB</span>
+      {/* ====== وضع الكاميرا ====== */}
+      {inputMode === 'camera' && !hasImage && (
+        <div className="bg-bg-surface border border-border-default rounded-card overflow-hidden shadow-card">
+
+          {/* حالة: idle — لم تُفتح الكاميرا بعد */}
+          {cameraStatus === 'idle' && (
+            <div className="p-10 text-center">
+              <div className="w-20 h-20 rounded-full bg-primary-light flex items-center justify-center mx-auto mb-4">
+                <Camera size={36} className="text-primary" />
+              </div>
+              <p className="text-text-main font-semibold mb-2">التقاط صورة بالكاميرا</p>
+              <p className="text-text-secondary text-sm mb-6 max-w-xs mx-auto">
+                سيتم طلب إذن الوصول إلى الكاميرا. وجّه الكاميرا نحو عبوة الدواء والتقط الصورة.
+              </p>
+              <Button onClick={startCamera} icon={<Camera size={18} />} size="lg">
+                فتح الكاميرا
+              </Button>
             </div>
           )}
 
-          {state.status === 'idle' && (
-            <Button
-              onClick={handleAnalyze}
-              size="lg"
-              className="w-full"
-              icon={<Search size={18} />}
-            >
-              تحليل الصورة
-            </Button>
+          {/* حالة: جاري فتح الكاميرا */}
+          {cameraStatus === 'requesting' && (
+            <div className="p-10 text-center">
+              <Loader2 size={36} className="text-primary animate-spin mx-auto mb-4" />
+              <p className="text-text-secondary text-sm">جارٍ فتح الكاميرا...</p>
+            </div>
           )}
 
-          {state.status === 'loading' && (
-            <div className="flex flex-col items-center gap-3 py-6">
-              <Loader2 size={36} className="text-primary animate-spin" />
-              <p className="text-text-secondary text-sm">جارٍ تحليل الصورة...</p>
+          {/* حالة: الكاميرا نشطة — عرض البث المباشر */}
+          {cameraStatus === 'active' && (
+            <div>
+              <div className="relative bg-black">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full max-h-80 object-contain"
+                />
+                <button
+                  onClick={stopCamera}
+                  className="absolute top-3 end-3 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition-colors"
+                  aria-label="إغلاق الكاميرا"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="p-4 text-center bg-bg-page">
+                <p className="text-text-secondary text-xs mb-3">
+                  وجّه الكاميرا نحو عبوة الدواء بوضوح، ثم اضغط لالتقاط الصورة
+                </p>
+                <Button onClick={capturePhoto} icon={<Camera size={18} />} size="lg">
+                  التقاط الصورة
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* حالة: تم رفض الإذن */}
+          {cameraStatus === 'denied' && (
+            <div className="p-8 text-center">
+              <div className="w-16 h-16 rounded-full bg-danger-bg flex items-center justify-center mx-auto mb-4">
+                <Camera size={28} className="text-danger-text" />
+              </div>
+              <p className="font-semibold text-text-main mb-2">تم رفض إذن الكاميرا</p>
+              <p className="text-text-secondary text-sm mb-5 max-w-sm mx-auto">{cameraError}</p>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <Button variant="outline" onClick={() => setCameraStatus('idle')} icon={<RefreshCw size={16} />}>
+                  أعد المحاولة
+                </Button>
+                <Button variant="outline" onClick={() => handleSwitchMode('upload')} icon={<Upload size={16} />}>
+                  ارفع صورة بدلًا من ذلك
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* حالة: لا توجد كاميرا */}
+          {cameraStatus === 'unavailable' && (
+            <div className="p-8 text-center">
+              <div className="w-16 h-16 rounded-full bg-warning-bg flex items-center justify-center mx-auto mb-4">
+                <Camera size={28} className="text-warning-text" />
+              </div>
+              <p className="font-semibold text-text-main mb-2">لا توجد كاميرا متاحة</p>
+              <p className="text-text-secondary text-sm mb-5 max-w-sm mx-auto">{cameraError}</p>
+              <Button variant="outline" onClick={() => handleSwitchMode('upload')} icon={<Upload size={16} />}>
+                ارفع صورة من الجهاز
+              </Button>
+            </div>
+          )}
+
+          {/* حالة: خطأ عام */}
+          {cameraStatus === 'error' && (
+            <div className="p-8 text-center">
+              <div className="w-16 h-16 rounded-full bg-danger-bg flex items-center justify-center mx-auto mb-4">
+                <Camera size={28} className="text-danger-text" />
+              </div>
+              <p className="font-semibold text-text-main mb-2">تعذّر فتح الكاميرا</p>
+              <p className="text-text-secondary text-sm mb-5 max-w-sm mx-auto">{cameraError}</p>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <Button onClick={startCamera} icon={<RefreshCw size={16} />}>
+                  أعد المحاولة
+                </Button>
+                <Button variant="outline" onClick={() => handleSwitchMode('upload')} icon={<Upload size={16} />}>
+                  ارفع صورة بدلًا من ذلك
+                </Button>
+              </div>
             </div>
           )}
         </div>
       )}
 
+      {/* canvas مخفي لالتقاط الصورة من الكاميرا */}
+      <canvas ref={canvasRef} className="hidden" />
+
+      {/* عرض الصورة الملتقطة بالكاميرا (قبل التحليل) */}
+      {inputMode === 'camera' && hasImage && (
+        <div className="bg-bg-surface border border-border-default rounded-card p-6 shadow-card">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-6 h-6 rounded-full bg-primary-light flex items-center justify-center">
+              <Camera size={13} className="text-primary" />
+            </div>
+            <p className="text-sm font-semibold text-text-main">الصورة الملتقطة</p>
+          </div>
+          <div className="relative mb-5">
+            <img
+              src={state.previewUrl!}
+              alt="الصورة الملتقطة بالكاميرا"
+              className="w-full max-h-64 object-contain rounded-card bg-bg-page"
+            />
+            <button
+              onClick={retakePhoto}
+              className="absolute top-3 end-3 w-8 h-8 rounded-full bg-white border border-border-default flex items-center justify-center hover:bg-danger-bg hover:text-danger-text transition-colors shadow"
+              aria-label="التقط صورة أخرى"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="flex gap-2">
+            {state.status === 'idle' && (
+              <>
+                <Button onClick={handleAnalyze} size="lg" className="flex-1" icon={<Search size={18} />}>
+                  تحليل الصورة
+                </Button>
+                <Button variant="outline" onClick={retakePhoto} icon={<RefreshCw size={16} />}>
+                  التقاط صورة أخرى
+                </Button>
+              </>
+            )}
+            {state.status === 'loading' && (
+              <div className="flex flex-col items-center gap-3 py-4 w-full">
+                <Loader2 size={36} className="text-primary animate-spin" />
+                <p className="text-text-secondary text-sm">جارٍ تحليل الصورة...</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* رسالة الخطأ */}
       {state.error && (
         <Alert variant="danger" className="mt-4" onClose={handleReset}>
           {state.error}
         </Alert>
       )}
 
+      {/* نتائج التحليل */}
       {state.status === 'success' && state.result && (
         <div className="mt-6 bg-primary-light/30 border border-primary/25 rounded-card p-6 shadow-card">
           <div className="flex items-center gap-2 mb-5">
@@ -253,12 +560,8 @@ export function ImageAnalysisPage() {
                 ابحث عن &quot;{state.result.extractedMedicineName}&quot;
               </Button>
             )}
-            <Button
-              variant="outline"
-              onClick={handleReset}
-              className="flex-1"
-            >
-              تحليل صورة جديدة
+            <Button variant="outline" onClick={handleReset} className="flex-1">
+              {inputMode === 'camera' ? 'التقاط صورة جديدة' : 'تحليل صورة جديدة'}
             </Button>
           </div>
         </div>

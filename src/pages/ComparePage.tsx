@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   BarChart2, Plus, X, Check, Printer,
   Bookmark, Pill, Sparkles, Loader2, ChevronDown, ChevronUp,
-  Camera, Upload, Image as ImageIcon,
+  Camera, Upload, Image as ImageIcon, Search,
 } from 'lucide-react';
 import { medicineService } from '../services/medicineService';
 import { comparisonService } from '../services/comparisonService';
@@ -13,8 +13,7 @@ import {
   analyzeMedicineImage,
   type GeminiCompareResult,
 } from '../services/GIMINI';
-import { getMatchLevel, formatPrice, priceDiff } from '../utils';
-import { validateImageFile } from '../utils';
+import { getMatchLevel, formatPrice, priceDiff, validateImageFile } from '../utils';
 import type { Medicine, ImageAnalysisResult } from '../types';
 import { ROUTES, IMAGE_UPLOAD } from '../constants';
 import { Badge } from '../components/ui/Badge';
@@ -108,103 +107,188 @@ function AIComparePanel({ result }: { result: GeminiCompareResult }) {
   );
 }
 
-function ImageAnalysisPanel() {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [dragOver, setDragOver] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ImageAnalysisResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+interface AddMedicinePanelProps {
+  selectedIds: string[];
+  recentSearches: string[];
+  onAdd: (id: string) => void;
+  onClose: () => void;
+}
 
-  const handleFile = useCallback((selectedFile: File) => {
-    const validation = validateImageFile(selectedFile);
+function AddMedicinePanel({ selectedIds, recentSearches, onAdd, onClose }: AddMedicinePanelProps) {
+  const [mode, setMode] = useState<'search' | 'image'>('search');
+
+  // --- بحث نصي ---
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Medicine[]>([]);
+
+  const handleSearch = (q: string) => {
+    if (!q.trim()) return;
+    searchHistoryService.add(q);
+    const results = medicineService.search({ query: q });
+    setSearchResults(results.slice(0, 8));
+  };
+
+  // --- تحليل صورة ---
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imageLoading, setImageLoading] = useState(false);
+  const [imageResult, setImageResult] = useState<ImageAnalysisResult | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [suggestedQuery, setSuggestedQuery] = useState('');
+
+  const handleImageFile = useCallback((file: File) => {
+    const validation = validateImageFile(file);
     if (!validation.valid) {
-      setError(validation.error ?? 'ملف غير صالح');
+      setImageError(validation.error ?? 'ملف غير صالح');
       return;
     }
     if (previewUrl) URL.revokeObjectURL(previewUrl);
-    const url = URL.createObjectURL(selectedFile);
-    setFile(selectedFile);
-    setPreviewUrl(url);
-    setResult(null);
-    setError(null);
+    setPreviewUrl(URL.createObjectURL(file));
+    setImageFile(file);
+    setImageResult(null);
+    setImageError(null);
   }, [previewUrl]);
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) handleFile(selectedFile);
+    const f = e.target.files?.[0];
+    if (f) handleImageFile(f);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const dropped = e.dataTransfer.files?.[0];
-    if (dropped) handleFile(dropped);
-  };
-
-  const handleAnalyze = async () => {
-    if (!file) return;
-    setLoading(true);
-    setError(null);
+  const handleAnalyzeImage = async () => {
+    if (!imageFile) return;
+    setImageLoading(true);
+    setImageError(null);
     try {
-      const res = await analyzeMedicineImage(file);
-      setResult(res);
+      const res = await analyzeMedicineImage(imageFile);
+      setImageResult(res);
+      if (res.extractedMedicineName) {
+        setSuggestedQuery(res.extractedMedicineName);
+      }
     } catch {
-      setError('حدث خطأ أثناء التحليل. يرجى المحاولة مرة أخرى.');
+      setImageError('تعذّر تحليل الصورة. يرجى المحاولة مرة أخرى.');
     } finally {
-      setLoading(false);
+      setImageLoading(false);
     }
   };
 
-  const handleReset = () => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setFile(null);
-    setPreviewUrl(null);
-    setResult(null);
-    setError(null);
+  const handleSearchFromImage = () => {
+    if (!suggestedQuery.trim()) return;
+    setMode('search');
+    setSearchQuery(suggestedQuery);
+    handleSearch(suggestedQuery);
   };
 
-  const [panelOpen, setPanelOpen] = useState(false);
+  const resetImage = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setImageFile(null);
+    setPreviewUrl(null);
+    setImageResult(null);
+    setImageError(null);
+    setSuggestedQuery('');
+  };
+
+  const handleModeSwitch = (newMode: 'search' | 'image') => {
+    setMode(newMode);
+  };
 
   return (
-    <div className="border border-primary/30 rounded-card bg-primary-light/10 overflow-hidden">
-      <button
-        onClick={() => setPanelOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-5 py-4 text-start hover:bg-primary-light/20 transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          <Camera size={18} className="text-primary" />
-          <span className="font-semibold text-text-main">تحليل صورة دواء بالذكاء الاصطناعي</span>
-          <span className="text-xs text-text-secondary bg-bg-surface border border-border-light px-2 py-0.5 rounded-full">
-            استخراج معلومات من صورة العبوة
-          </span>
-        </div>
-        {panelOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-      </button>
+    <div className="bg-bg-surface border border-border-default rounded-card p-5 mb-6 shadow-card">
+      {/* رأس اللوحة */}
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-semibold text-text-main">إضافة دواء للمقارنة</h3>
+        <button
+          onClick={onClose}
+          className="p-1.5 rounded-btn hover:bg-bg-page transition-colors text-text-secondary"
+          aria-label="إغلاق"
+        >
+          <X size={16} />
+        </button>
+      </div>
 
-      {panelOpen && (
-        <div className="px-5 pb-5">
+      {/* أزرار التبديل بين الوضعين */}
+      <div className="flex gap-2 mb-4 p-1 bg-bg-page rounded-card">
+        <button
+          onClick={() => handleModeSwitch('search')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-btn text-sm font-medium transition-colors ${
+            mode === 'search'
+              ? 'bg-bg-surface text-primary shadow-sm border border-border-default'
+              : 'text-text-secondary hover:text-text-main'
+          }`}
+        >
+          <Search size={15} />
+          بحث بالاسم
+        </button>
+        <button
+          onClick={() => handleModeSwitch('image')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-btn text-sm font-medium transition-colors ${
+            mode === 'image'
+              ? 'bg-bg-surface text-primary shadow-sm border border-border-default'
+              : 'text-text-secondary hover:text-text-main'
+          }`}
+        >
+          <Camera size={15} />
+          تحليل صورة
+        </button>
+      </div>
+
+      {/* وضع البحث النصي */}
+      {mode === 'search' && (
+        <>
+          <SearchBar
+            value={searchQuery}
+            onChange={setSearchQuery}
+            onSearch={handleSearch}
+            placeholder="ابحث عن دواء لإضافته..."
+            recentSearches={recentSearches}
+            onSelectRecent={handleSearch}
+          />
+          {searchResults.length > 0 && (
+            <div className="mt-3 border border-border-default rounded-card overflow-hidden">
+              {searchResults.map((med) => (
+                <button
+                  key={med.id}
+                  onClick={() => onAdd(med.id)}
+                  disabled={selectedIds.includes(med.id)}
+                  className="w-full flex items-center justify-between px-4 py-3 text-start hover:bg-bg-page transition-colors border-b border-border-light last:border-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-text-main">{med.tradeName}</p>
+                    <p className="text-xs text-text-secondary">{med.activeIngredient} · {med.company}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-primary">{formatPrice(med.price)}</span>
+                    {selectedIds.includes(med.id) ? (
+                      <Badge variant="success">مضاف</Badge>
+                    ) : (
+                      <Plus size={16} className="text-primary" />
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* وضع تحليل الصورة */}
+      {mode === 'image' && (
+        <div className="space-y-3">
           {!previewUrl ? (
             <div
-              className={`border-2 border-dashed rounded-card p-8 text-center transition-all cursor-pointer ${
-                dragOver
-                  ? 'border-primary bg-primary-light/30'
-                  : 'border-secondary bg-bg-surface hover:border-primary hover:bg-primary-light/10'
-              }`}
-              onDrop={handleDrop}
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
+              className="border-2 border-dashed border-secondary rounded-card p-8 text-center cursor-pointer hover:border-primary hover:bg-primary-light/10 transition-all"
               onClick={() => fileInputRef.current?.click()}
               role="button"
-              aria-label="منطقة رفع صورة الدواء"
+              aria-label="اختر صورة دواء"
             >
-              <Upload size={36} className="text-secondary mx-auto mb-3" />
+              <Upload size={32} className="text-secondary mx-auto mb-3" />
               <p className="text-sm font-semibold text-text-main mb-1">
-                اسحب وأفلت صورة عبوة الدواء هنا
+                ارفع صورة عبوة الدواء
               </p>
-              <p className="text-xs text-text-secondary mb-3">أو اضغط لاختيار صورة</p>
+              <p className="text-xs text-text-secondary mb-2">
+                اضغط لاختيار صورة من جهازك
+              </p>
               <div className="flex flex-wrap justify-center gap-1.5">
                 {IMAGE_UPLOAD.ALLOWED_EXTENSIONS.map((ext) => (
                   <span key={ext} className="px-2 py-0.5 bg-border-light text-text-secondary text-xs rounded-full">
@@ -212,108 +296,119 @@ function ImageAnalysisPanel() {
                   </span>
                 ))}
               </div>
-              <p className="text-xs text-text-secondary mt-2">
-                الحد الأقصى: {IMAGE_UPLOAD.MAX_SIZE_LABEL}
-              </p>
               <input
                 ref={fileInputRef}
                 type="file"
                 accept={IMAGE_UPLOAD.ALLOWED_TYPES.join(',')}
                 onChange={handleFileInput}
                 className="hidden"
-                aria-label="اختر صورة دواء"
               />
             </div>
           ) : (
-            <div className="bg-bg-surface border border-border-default rounded-card p-4">
-              <div className="relative mb-4">
+            <div className="bg-bg-page border border-border-default rounded-card p-3">
+              <div className="relative mb-3">
                 <img
                   src={previewUrl}
-                  alt="صورة الدواء"
-                  className="w-full max-h-48 object-contain rounded-card bg-bg-page"
+                  alt="معاينة صورة الدواء"
+                  className="w-full max-h-40 object-contain rounded-card bg-bg-surface"
                 />
                 <button
-                  onClick={handleReset}
-                  className="absolute top-2 end-2 w-7 h-7 rounded-full bg-white border border-border-default flex items-center justify-center hover:bg-danger-bg hover:text-danger-text transition-colors shadow"
+                  onClick={resetImage}
+                  className="absolute top-2 end-2 w-6 h-6 rounded-full bg-white border border-border-default flex items-center justify-center hover:bg-danger-bg hover:text-danger-text transition-colors shadow text-text-secondary"
                   aria-label="إزالة الصورة"
                 >
-                  <X size={14} />
+                  <X size={12} />
                 </button>
               </div>
-
-              {file && (
-                <div className="flex items-center gap-2 text-xs text-text-secondary mb-3 p-2 bg-bg-page rounded-card">
-                  <ImageIcon size={14} />
-                  <span className="flex-1 truncate">{file.name}</span>
-                  <span>{(file.size / 1024).toFixed(0)} KB</span>
+              {imageFile && (
+                <div className="flex items-center gap-1.5 text-xs text-text-secondary mb-2">
+                  <ImageIcon size={12} />
+                  <span className="flex-1 truncate">{imageFile.name}</span>
+                  <span>{(imageFile.size / 1024).toFixed(0)} KB</span>
                 </div>
               )}
-
-              {!loading && !result && (
-                <Button onClick={handleAnalyze} className="w-full" icon={<Sparkles size={16} />}>
-                  تحليل الصورة بالذكاء الاصطناعي
+              {!imageLoading && !imageResult && (
+                <Button onClick={handleAnalyzeImage} className="w-full" size="sm" icon={<Sparkles size={14} />}>
+                  حلّل بالذكاء الاصطناعي
                 </Button>
               )}
-
-              {loading && (
-                <div className="flex flex-col items-center gap-2 py-4">
-                  <Loader2 size={28} className="text-primary animate-spin" />
-                  <p className="text-sm text-text-secondary">جارٍ تحليل الصورة...</p>
+              {imageLoading && (
+                <div className="flex items-center justify-center gap-2 py-3">
+                  <Loader2 size={20} className="text-primary animate-spin" />
+                  <span className="text-sm text-text-secondary">جارٍ تحليل الصورة...</span>
                 </div>
               )}
             </div>
           )}
 
-          {error && (
-            <Alert variant="danger" className="mt-3" onClose={handleReset}>
-              {error}
+          {imageError && (
+            <Alert variant="danger" onClose={resetImage}>
+              <span className="text-sm">{imageError}</span>
             </Alert>
           )}
 
-          {result && (
-            <div className="mt-4 bg-primary-light/20 border border-primary/20 rounded-card p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-6 h-6 rounded-full bg-success-bg flex items-center justify-center">
-                  <Check size={13} className="text-success-text" />
+          {imageResult && (
+            <div className="bg-primary-light/20 border border-primary/20 rounded-card p-4 space-y-2">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-5 h-5 rounded-full bg-success-bg flex items-center justify-center shrink-0">
+                  <Check size={11} className="text-success-text" />
                 </div>
-                <h4 className="font-bold text-text-main text-sm">نتائج تحليل الصورة</h4>
+                <p className="text-sm font-bold text-text-main">نتائج تحليل الصورة</p>
                 <span className="mr-auto text-xs text-text-secondary bg-bg-surface border border-border-light px-2 py-0.5 rounded-full">
-                  ثقة {Math.round((result.confidence || 0) * 100)}%
+                  ثقة {Math.round((imageResult.confidence || 0) * 100)}%
                 </span>
               </div>
 
-              <div className="space-y-2">
-                {[
-                  { label: 'اسم الدواء المستخرج', value: result.extractedMedicineName },
-                  { label: 'المادة الفعالة', value: result.extractedActiveIngredient },
-                  { label: 'التركيز', value: result.extractedConcentration },
-                ].map((item) => (
-                  <div key={item.label} className="bg-bg-surface rounded-card px-3 py-2 flex items-center justify-between gap-3">
-                    <span className="text-xs text-text-secondary">{item.label}</span>
-                    <span className="text-xs font-bold text-text-main">
-                      {item.value || <span className="text-text-secondary font-normal">غير محدد</span>}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              {[
+                { label: 'اسم الدواء', value: imageResult.extractedMedicineName },
+                { label: 'المادة الفعالة', value: imageResult.extractedActiveIngredient },
+                { label: 'التركيز', value: imageResult.extractedConcentration },
+              ].map((item) => item.value ? (
+                <div key={item.label} className="flex items-center justify-between gap-2 bg-bg-surface rounded-card px-3 py-2">
+                  <span className="text-xs text-text-secondary">{item.label}</span>
+                  <span className="text-xs font-bold text-text-main">{item.value}</span>
+                </div>
+              ) : null)}
 
-              {result.notes && (
-                <p className="text-xs text-text-secondary mt-3 leading-relaxed">{result.notes}</p>
+              {imageResult.notes && (
+                <p className="text-xs text-text-secondary leading-relaxed">{imageResult.notes}</p>
               )}
 
-              <Alert variant="warning" className="mt-3">
-                <span className="text-xs">
-                  نتائج تحليل الصورة أولية. تحقق من اسم الدواء المستخرج مع الصيدلاني قبل اتخاذ أي قرار.
-                </span>
-              </Alert>
+              {imageResult.extractedMedicineName ? (
+                <div className="pt-1">
+                  <p className="text-xs text-text-secondary mb-2">
+                    ابحث في قاعدة البيانات المحلية عن الدواء المستخرج:
+                  </p>
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    icon={<Search size={14} />}
+                    onClick={handleSearchFromImage}
+                  >
+                    ابحث عن &quot;{imageResult.extractedMedicineName}&quot;
+                  </Button>
+                </div>
+              ) : (
+                <Alert variant="warning">
+                  <span className="text-xs">
+                    الصورة غير واضحة أو لم يتمكن النظام من استخراج اسم الدواء منها. جرب صورة أوضح.
+                  </span>
+                </Alert>
+              )}
 
               <button
-                onClick={handleReset}
-                className="mt-3 text-xs text-primary hover:text-primary-hover underline transition-colors"
+                onClick={resetImage}
+                className="text-xs text-primary hover:text-primary-hover underline transition-colors"
               >
-                تحليل صورة أخرى
+                ارفع صورة أخرى
               </button>
             </div>
+          )}
+
+          {!previewUrl && !imageResult && (
+            <p className="text-xs text-text-secondary text-center">
+              ارفع صورة واضحة لعبوة الدواء للحصول على أفضل النتائج
+            </p>
           )}
         </div>
       )}
@@ -335,9 +430,7 @@ export function ComparePage() {
   }, [idsParam]);
 
   const [selectedIds, setSelectedIds] = useState<string[]>(initialIds);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<Medicine[]>([]);
-  const [showSearch, setShowSearch] = useState(false);
+  const [showAddPanel, setShowAddPanel] = useState(false);
   const [copied, setCopied] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<GeminiCompareResult | null>(null);
@@ -353,21 +446,12 @@ export function ComparePage() {
     [medicines]
   );
 
-  const handleSearch = (q: string) => {
-    if (!q.trim()) return;
-    searchHistoryService.add(q);
-    const results = medicineService.search({ query: q });
-    setSearchResults(results.slice(0, 8));
-  };
-
   const addMedicine = (id: string) => {
     if (selectedIds.includes(id) || selectedIds.length >= 4) return;
     const newIds = [...selectedIds, id];
     setSelectedIds(newIds);
     navigate(`${ROUTES.COMPARE}?ids=${newIds.join(',')}`, { replace: true });
-    setShowSearch(false);
-    setSearchQuery('');
-    setSearchResults([]);
+    setShowAddPanel(false);
   };
 
   const removeMedicine = (id: string) => {
@@ -422,6 +506,7 @@ export function ComparePage() {
         <p className="text-text-secondary">اختر حتى 4 أدوية لمقارنتها جنبًا إلى جنب</p>
       </div>
 
+      {/* بطاقات الأدوية المحددة */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
         {Array.from({ length: 4 }).map((_, i) => {
           const med = medicines[i];
@@ -453,8 +538,8 @@ export function ComparePage() {
                 </>
               ) : (
                 <button
-                  onClick={() => setShowSearch(true)}
-                  className="flex flex-col items-center gap-1.5 text-text-secondary hover:text-primary transition-colors"
+                  onClick={() => setShowAddPanel(true)}
+                  className="flex flex-col items-center gap-1.5 text-text-secondary hover:text-primary transition-colors w-full h-full justify-center"
                   disabled={selectedIds.length >= 4}
                 >
                   <Plus size={22} />
@@ -466,62 +551,30 @@ export function ComparePage() {
         })}
       </div>
 
-      {showSearch && (
-        <div className="bg-bg-surface border border-border-default rounded-card p-5 mb-6 shadow-card">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-text-main">إضافة دواء للمقارنة</h3>
-            <button
-              onClick={() => { setShowSearch(false); setSearchResults([]); }}
-              className="p-1.5 rounded-btn hover:bg-bg-page transition-colors text-text-secondary"
-            >
-              <X size={16} />
-            </button>
-          </div>
-          <SearchBar
-            value={searchQuery}
-            onChange={setSearchQuery}
-            onSearch={handleSearch}
-            placeholder="ابحث عن دواء لإضافته..."
-            recentSearches={recentSearches}
-            onSelectRecent={handleSearch}
-          />
-          {searchResults.length > 0 && (
-            <div className="mt-3 border border-border-default rounded-card overflow-hidden">
-              {searchResults.map((med) => (
-                <button
-                  key={med.id}
-                  onClick={() => addMedicine(med.id)}
-                  disabled={selectedIds.includes(med.id)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-start hover:bg-bg-page transition-colors border-b border-border-light last:border-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-text-main">{med.tradeName}</p>
-                    <p className="text-xs text-text-secondary">{med.activeIngredient} · {med.company}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-primary">{formatPrice(med.price)}</span>
-                    {selectedIds.includes(med.id) ? (
-                      <Badge variant="success">مضاف</Badge>
-                    ) : (
-                      <Plus size={16} className="text-primary" />
-                    )}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      {/* لوحة إضافة دواء (بحث + صورة) */}
+      {showAddPanel && (
+        <AddMedicinePanel
+          selectedIds={selectedIds}
+          recentSearches={recentSearches}
+          onAdd={addMedicine}
+          onClose={() => setShowAddPanel(false)}
+        />
       )}
 
       {medicines.length === 0 ? (
         <EmptyState
           icon={<BarChart2 size={36} />}
           title="أضف أدوية للمقارنة"
-          description="اختر دواءين أو أكثر لعرض جدول المقارنة التفصيلي"
+          description="اختر دواءين أو أكثر لعرض جدول المقارنة التفصيلي — يمكنك البحث بالاسم أو رفع صورة"
           action={
-            <Button onClick={() => setShowSearch(true)} icon={<Plus size={16} />}>
-              إضافة دواء
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-2 justify-center">
+              <Button onClick={() => setShowAddPanel(true)} icon={<Search size={16} />}>
+                ابحث عن دواء
+              </Button>
+              <Button variant="outline" onClick={() => setShowAddPanel(true)} icon={<Camera size={16} />}>
+                رفع صورة دواء
+              </Button>
+            </div>
           }
         />
       ) : medicines.length === 1 ? (
@@ -593,26 +646,11 @@ export function ComparePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  <CompareRow
-                    label="الاسم التجاري"
-                    values={medicines.map((m) => m.tradeName)}
-                  />
-                  <CompareRow
-                    label="المادة الفعالة"
-                    values={medicines.map((m) => m.activeIngredient)}
-                  />
-                  <CompareRow
-                    label="التركيز"
-                    values={medicines.map((m) => m.concentration)}
-                  />
-                  <CompareRow
-                    label="الشكل الدوائي"
-                    values={medicines.map((m) => m.dosageForm)}
-                  />
-                  <CompareRow
-                    label="الشركة"
-                    values={medicines.map((m) => m.company)}
-                  />
+                  <CompareRow label="الاسم التجاري" values={medicines.map((m) => m.tradeName)} />
+                  <CompareRow label="المادة الفعالة" values={medicines.map((m) => m.activeIngredient)} />
+                  <CompareRow label="التركيز" values={medicines.map((m) => m.concentration)} />
+                  <CompareRow label="الشكل الدوائي" values={medicines.map((m) => m.dosageForm)} />
+                  <CompareRow label="الشركة" values={medicines.map((m) => m.company)} />
                   <CompareRow
                     label="السعر"
                     values={medicines.map((m) => formatPrice(m.price))}
@@ -627,13 +665,7 @@ export function ComparePage() {
                         {i === 0 ? (
                           <span className="text-text-secondary text-xs">المرجع</span>
                         ) : (
-                          <span
-                            className={
-                              med.price > medicines[0].price
-                                ? 'text-danger-text font-medium'
-                                : 'text-success-text font-medium'
-                            }
-                          >
+                          <span className={med.price > medicines[0].price ? 'text-danger-text font-medium' : 'text-success-text font-medium'}>
                             {priceDiff(medicines[0].price, med.price)}
                           </span>
                         )}
@@ -709,8 +741,6 @@ export function ComparePage() {
               </p>
             )}
           </div>
-
-          <ImageAnalysisPanel />
 
           {aiResult && <AIComparePanel result={aiResult} />}
 
