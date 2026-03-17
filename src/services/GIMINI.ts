@@ -60,24 +60,45 @@ const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 
 const AI_MODEL = 'gpt-4o';
 
+const SYSTEM_PROMPT = `أنت مساعد صيدلاني ذكي داخل منصة "قارن دواءك"، مخصص للسوق الأردني، ومهمتك تقديم معلومات دوائية واضحة ومنظمة ودقيقة للمستخدم باللغة العربية الفصحى فقط.
+
+التزم بالقواعد التالية دائمًا:
+1) أجب باللغة العربية الفصحى فقط.
+2) لا تذكر اسم أي منصة ذكاء اصطناعي.
+3) لا تقل إنك نموذج أو نظام أو منصة، بل قدّم الإجابة مباشرة.
+4) إذا كان السؤال عن دواء أو صورة دواء أو مقارنة بين أدوية، فأعد المعلومات بشكل منظم وواضح ومفيد.
+5) إذا كان السؤال مبنيًا على صورة، فحلل الصورة أولًا ثم استخرج المعلومات الدوائية منها بأفضل دقة ممكنة.
+6) إذا كانت بعض المعلومات غير مؤكدة من الصورة أو من السؤال أو من المصادر، فاذكر ذلك بوضوح دون اختلاق.
+7) أعطِ الأولوية للمصادر الموثوقة، وخاصة للمعلومات المتعلقة بالسعر والمادة الفعالة والاستعمال وطريقة الحفظ والتحذيرات.
+8) عند ذكر الأسعار، ابحث عن السعر من مصادر أردنية موثوقة كلما أمكن، واذكره بصيغة "سعر تقريبي بالدينار الأردني" إذا لم تتوفر قيمة مؤكدة أو موحدة.
+9) إذا وجدت أكثر من سعر لنفس الدواء، فاذكر نطاقًا سعريًا تقريبيًا أو اذكر أن السعر قد يختلف حسب الصيدلية أو العبوة أو الشركة.
+10) إذا وجدت بدائل، فاذكر بدائل محتملة بشكل منظم، مع تنبيه أن الاستبدال النهائي يجب أن يكون بمراجعة صيدلي أو طبيب عند الحاجة.
+11) إذا كان هناك تحذير مهم أو أعراض جانبية أو تداخلات محتملة، أبرزها بوضوح.
+12) اجعل الرد عمليًا، منظمًا، ومناسبًا لمستخدم عربي غير متخصص.
+13) لا تعتمد على التخمين إذا لم تتوفر معلومة موثوقة.
+14) عند الحاجة إلى معلومات عن السعر أو الحجم أو الشركة أو التخزين أو المادة الفعالة أو الشكل الدوائي، استند إلى مصادر موثوقة ومعروفة.
+
+جميع قيم الحقول النصية في JSON يجب أن تكون باللغة العربية الفصحى فقط، باستثناء الأسماء التجارية للأدوية التي يمكن إبقاؤها بالإنجليزية.
+أعد JSON صالحًا فقط — لا ماركداون، لا كتل كود، لا تعليق خارج JSON.`;
+
 const PROMPTS = {
 
-  IMAGE_ANALYSIS: `You are analyzing an uploaded medicine-related image for a pharmacy comparison platform focused on the Jordanian market.
+  IMAGE_ANALYSIS: `تحليل صورة دواء:
+قم بفحص الصورة المرفقة بعناية وحدد إذا كانت تُظهر منتج دوائي أو عبوة دواء أو شريط دواء أو تغليف صيدلاني أو وصفة طبية أو أي عنصر دوائي آخر.
 
-Your task is to inspect the image carefully and determine whether it shows a medicine product, medicine box, blister pack, pharmaceutical packaging, prescription label, or another medicine-related item.
+القواعد:
+1) لا تخترع أو تفترض تفاصيل غير مرئية في الصورة.
+2) إذا كانت الصورة غير واضحة أو رديئة الجودة، وضّح ذلك في حقل reasonIfUnclear باللغة العربية.
+3) إذا كانت درجة الثقة أقل من 0.5، اشرح السبب في reasonIfUnclear باللغة العربية.
+4) إذا لم تكن الصورة لدواء، اضبط isMedicine على false واشرح بالعربية.
+5) استخرج فقط ما هو مرئي أو مدعوم بوضوح من الصورة.
+6) أعد JSON صالحًا فقط — لا ماركداون، لا كتل كود، لا تعليق خارج JSON.
+7) هذه المنصة مخصصة للسوق الأردني.
+8) لا تخترع أسماء أدوية أو أسماء جنيريكة أو معلومات جرعات غير مرئية في الصورة.
+9) إذا تعذّر تحديد حقل، اتركه سلسلة نصية فارغة — لا تخترع قيمة.
+10) جميع القيم النصية يجب أن تكون بالعربية الفصحى، باستثناء الأسماء التجارية.
 
-Rules:
-1. Do not invent or assume details that are not visible in the image.
-2. If the image is unclear or low quality, explicitly say so in reasonIfUnclear.
-3. If confidence is below 0.5, explain why in reasonIfUnclear.
-4. If this is not a medicine image, set isMedicine to false and explain clearly.
-5. Extract only what is visible or strongly supported by the image.
-6. Return valid JSON only — no markdown, no code fences, no extra commentary.
-7. This platform is focused on Jordan. Do not assume legal approval or exact availability unless supported by visible evidence on the image.
-8. Do not fabricate medicine names, generic names, or dosage information not visible on the image.
-9. If a field cannot be determined, use an empty string — never invent a value.
-
-Return JSON with exactly these fields:
+أعد JSON بهذه الحقول بالضبط:
 {
   "isMedicine": boolean,
   "confidence": number (0.0 to 1.0),
@@ -96,21 +117,21 @@ Return JSON with exactly these fields:
   "reasonIfUnclear": string
 }`,
 
-  MEDICINE_SEARCH: `You are assisting a Jordan-focused pharmacy comparison platform.
+  MEDICINE_SEARCH: `بحث دوائي للسوق الأردني:
+المستخدم بحث عن دواء أو مادة فعالة لم توجد في قاعدة البيانات المحلية.
+مهمتك تفسير استعلام المستخدم باعتناء واقتراح أدوية محتملة مناسبة للسوق الأردني.
 
-A user searched for a medicine or active ingredient that was not found in the local dataset.
-Your task is to interpret the user query carefully and suggest likely medicine matches relevant to the Jordanian market.
+القواعد:
+1) لا تخترع يقيناً عند وجود غموض — نبّه دائمًا على عدم اليقين.
+2) إذا كان الاستعلام قد يحتوي على أخطاء إملائية أو نقحرة، استنتج بعناية وأشر للغموض في الملاحظات.
+3) فضّل الاقتراحات الدوائية المنظمة على الشروحات الطويلة.
+4) إذا لم تكن الأسعار مؤكدة، صنّفها كتقديرية (مثل: "~2.500 د.أ (تقديري)").
+5) أعد JSON فقط — لا ماركداون، لا تعليق خارج JSON.
+6) اترك الحقول المجهولة سلسلة نصية فارغة — لا تخترع قيمًا.
+7) حدّد الاقتراحات بخمسة أدوية ذات صلة كحد أقصى.
+8) جميع القيم النصية يجب أن تكون بالعربية الفصحى، باستثناء الأسماء التجارية.
 
-Rules:
-1. Do not invent certainty where there is ambiguity — always flag uncertainty.
-2. If the query may contain spelling mistakes or transliterations, infer carefully and mention uncertainty in the notes.
-3. Prefer structured medicine suggestions over long text explanations.
-4. If prices are not certain, label them as estimated (e.g., "~2.500 JOD (estimated)").
-5. Return JSON only — no markdown, no extra commentary outside JSON.
-6. Keep unknown fields as empty string — never invent values.
-7. Limit suggestions to a maximum of 5 relevant medicines.
-
-Return JSON with this exact structure:
+أعد JSON بهذا الهيكل بالضبط:
 {
   "query": string,
   "interpretedMedicineName": string,
@@ -133,20 +154,20 @@ Return JSON with this exact structure:
   ]
 }`,
 
-  MEDICINE_COMPARE: `You are comparing medicines for a pharmacy comparison platform focused on Jordan.
+  MEDICINE_COMPARE: `مقارنة أدوية للسوق الأردني:
+مهمتك مقارنة الأدوية المقدمة بأكبر قدر ممكن من الدقة مع إخراج منظم.
 
-Your task is to compare the provided medicines as accurately as possible using structured output.
+القواعد:
+1) لا تخترع حقائق دقيقة عند عدم التأكد — أشر للغموض بوضوح بالعربية.
+2) إذا لم تكن أسعار الأردن دقيقة، صنّفها كتقديرية في حقل priceComparisonJordan.
+3) إذا اختلفت أحجام العبوات بين الأدوية، اعرضها بوضوح في packageSizeComparison.
+4) أبرز جميع الفروق المهمة: المادة الفعالة، التركيز، الشكل الدوائي، حجم العبوة، السعر.
+5) أضف تحذيرات إذا كانت مواد فعالة مختلفة متورطة أو إذا كان الاستبدال العلاجي محفوفًا بمخاطر.
+6) أعد JSON صالحًا فقط — لا ماركداون، لا شرح خارج JSON.
+7) اترك الحقول التي لا يمكن تحديدها سلسلة نصية فارغة — لا تخترع قيمًا.
+8) جميع القيم النصية يجب أن تكون بالعربية الفصحى، باستثناء الأسماء التجارية.
 
-Rules:
-1. Do not invent exact facts if uncertain — flag uncertainty clearly.
-2. If Jordan prices are not exact, mark them as estimated in priceComparisonJordan.
-3. If package sizes vary between medicines, present them clearly in packageSizeComparison.
-4. Highlight all important differences: active ingredient, strength, dosage form, package size, and price.
-5. Include warnings if different active ingredients are involved or if therapeutic substitution is risky.
-6. Return valid JSON only — no markdown, no extra explanation outside JSON.
-7. Keep empty string for fields you cannot determine — never invent values.
-
-Return JSON with exactly these fields:
+أعد JSON بهذه الحقول بالضبط:
 {
   "medicinesCompared": string[],
   "comparisonSummary": string,
@@ -162,20 +183,20 @@ Return JSON with exactly these fields:
   "needsReview": boolean
 }`,
 
-  PRICE_INSIGHTS: `You are updating medicine pricing insights for a Jordan-focused pharmacy comparison platform.
+  PRICE_INSIGHTS: `تحديث بيانات أسعار الأدوية للسوق الأردني:
+لكل دواء مقدم، أعد معلومات أسعار منظمة مناسبة للسوق الأردني.
 
-For each medicine provided, return structured pricing information relevant to the Jordanian market.
+القواعد:
+1) لا تصنع يقيناً — إذا كانت الأسعار تقديرية، أشر لذلك بوضوح في حقل notes بالعربية.
+2) أدرج جميع خيارات العبوات التي تعرفها (مثل "10 أقراص"، "20 قرصًا"، "100 مل").
+3) أدرج درجة الثقة والملاحظات لكل مدخل.
+4) إذا كانت توافرية الدواء في الأردن غير مؤكدة، وضّح ذلك بالعربية.
+5) أعد مصفوفة JSON فقط — لا ماركداون، لا تعليق خارج JSON.
+6) اترك الحقول المجهولة سلسلة نصية فارغة — لا تخترع قيمًا.
+7) اضبط needsReview على true لأي مدخل تكون ثقتك فيه منخفضة.
+8) جميع القيم النصية يجب أن تكون بالعربية الفصحى، باستثناء الأسماء التجارية.
 
-Rules:
-1. Do not fabricate certainty — if pricing is estimated, mark it clearly in the notes field.
-2. Include all package options you are aware of (e.g., "10 tabs", "20 tabs", "100ml").
-3. Include a confidence score and notes for each entry.
-4. If availability in Jordan is uncertain, state that clearly.
-5. Return JSON array only — no markdown, no extra commentary outside JSON.
-6. Keep unknown fields as empty string — never invent values.
-7. Set needsReview to true for any entry where you have low confidence.
-
-Return JSON array:
+أعد مصفوفة JSON:
 [
   {
     "medicineId": string,
@@ -210,13 +231,16 @@ export function isGeminiConfigured(): boolean {
 type OpenAITextContent = { type: 'text'; text: string };
 type OpenAIImageContent = { type: 'image_url'; image_url: { url: string } };
 type OpenAIMessage = {
-  role: 'user';
+  role: 'system' | 'user';
   content: string | Array<OpenAITextContent | OpenAIImageContent>;
 };
 
-async function callAI(messages: OpenAIMessage[], maxTokens: number): Promise<string> {
+async function callAI(userMessages: OpenAIMessage[], maxTokens: number): Promise<string> {
   const mode = getGeminiMode();
   if (mode === 'mock') throw new Error('GIMINI: لا يوجد endpoint أو مفتاح مُعدّ');
+
+  const systemMessage: OpenAIMessage = { role: 'system', content: SYSTEM_PROMPT };
+  const messages = [systemMessage, ...userMessages];
 
   const body = {
     model: AI_MODEL,
@@ -302,7 +326,7 @@ function mockImageResult(fileName: string): ImageAnalysisResult {
       extractedConcentration: '500 مجم',
       confidence: 0.85,
       rawText: 'Panadol 500mg Paracetamol — GSK Jordan',
-      notes: 'وضع تجريبي — AI غير مفعّل. أضف VITE_AI_API_ENDPOINT في .env للإنتاج، أو VITE_OPENAI_API_KEY للتطوير المحلي.',
+      notes: 'وضع تجريبي — الذكاء الاصطناعي غير مفعّل. أضف VITE_AI_API_ENDPOINT في .env للإنتاج.',
     },
     {
       extractedMedicineName: 'بروفين 400',
@@ -310,7 +334,7 @@ function mockImageResult(fileName: string): ImageAnalysisResult {
       extractedConcentration: '400 مجم',
       confidence: 0.78,
       rawText: 'Brufen 400mg Ibuprofen',
-      notes: 'وضع تجريبي — AI غير مفعّل. أضف VITE_AI_API_ENDPOINT في .env للإنتاج، أو VITE_OPENAI_API_KEY للتطوير المحلي.',
+      notes: 'وضع تجريبي — الذكاء الاصطناعي غير مفعّل. أضف VITE_AI_API_ENDPOINT في .env للإنتاج.',
     },
     {
       extractedMedicineName: 'نيكسيوم 20',
@@ -318,7 +342,7 @@ function mockImageResult(fileName: string): ImageAnalysisResult {
       extractedConcentration: '20 مجم',
       confidence: 0.9,
       rawText: 'Nexium 20mg Esomeprazole — AstraZeneca',
-      notes: 'وضع تجريبي — AI غير مفعّل. أضف VITE_AI_API_ENDPOINT في .env للإنتاج، أو VITE_OPENAI_API_KEY للتطوير المحلي.',
+      notes: 'وضع تجريبي — الذكاء الاصطناعي غير مفعّل. أضف VITE_AI_API_ENDPOINT في .env للإنتاج.',
     },
   ];
   const idx = (fileName.length + (fileName.charCodeAt(0) || 0)) % examples.length;
@@ -352,7 +376,7 @@ function mockSearchResult(query: string): GeminiSearchResult {
 function mockCompareResult(names: string[]): GeminiCompareResult {
   return {
     medicinesCompared: names,
-    comparisonSummary: 'وضع تجريبي — AI غير مفعّل للمقارنة المتقدمة.',
+    comparisonSummary: 'وضع تجريبي — الذكاء الاصطناعي غير مفعّل للمقارنة المتقدمة.',
     activeIngredientDifferences: '',
     strengthDifferences: '',
     dosageFormDifferences: '',
@@ -416,7 +440,7 @@ export async function analyzeMedicineImage(file: File): Promise<ImageAnalysisRes
     const mock = mockImageResult(file.name);
     return {
       ...mock,
-      notes: `خطأ أثناء الاتصال بـ AI: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
+      notes: `خطأ أثناء الاتصال بالذكاء الاصطناعي: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
       confidence: 0,
     };
   }
@@ -427,7 +451,7 @@ export async function searchMedicineWithGemini(query: string): Promise<GeminiSea
 
   const prompt = `${PROMPTS.MEDICINE_SEARCH}
 
-User query: "${query}"`;
+استعلام المستخدم: "${query}"`;
 
   try {
     const messages: OpenAIMessage[] = [{ role: 'user', content: prompt }];
@@ -441,7 +465,7 @@ User query: "${query}"`;
       suggestions: mock.suggestions.map((s) => ({
         ...s,
         confidence: 0,
-        notes: `خطأ أثناء الاتصال بـ AI: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
+        notes: `خطأ أثناء الاتصال بالذكاء الاصطناعي: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
       })),
     };
   }
@@ -465,16 +489,16 @@ export async function compareMedicinesWithGemini(
       (m, i) =>
         `${i + 1}. ${m.name}` +
         `${m.genericName ? ` (${m.genericName})` : ''}` +
-        `${m.strength ? `, ${m.strength}` : ''}` +
-        `${m.dosageForm ? `, ${m.dosageForm}` : ''}` +
-        `${m.company ? `, ${m.company}` : ''}` +
-        `${m.priceJOD !== undefined ? `, ${m.priceJOD} JOD` : ''}`
+        `${m.strength ? `، ${m.strength}` : ''}` +
+        `${m.dosageForm ? `، ${m.dosageForm}` : ''}` +
+        `${m.company ? `، ${m.company}` : ''}` +
+        `${m.priceJOD !== undefined ? `، ${m.priceJOD} د.أ` : ''}`
     )
     .join('\n');
 
   const prompt = `${PROMPTS.MEDICINE_COMPARE}
 
-Medicines to compare:
+الأدوية المطلوب مقارنتها:
 ${medicineList}`;
 
   try {
@@ -486,7 +510,7 @@ ${medicineList}`;
     const mock = mockCompareResult(names);
     return {
       ...mock,
-      notes: `خطأ أثناء الاتصال بـ AI: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
+      notes: `خطأ أثناء الاتصال بالذكاء الاصطناعي: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
     };
   }
 }
@@ -508,11 +532,11 @@ export async function fetchJordanPriceInsights(
     }));
   }
 
-  const list = medicines.map((m, i) => `${i + 1}. id: ${m.id}, name: ${m.name}`).join('\n');
+  const list = medicines.map((m, i) => `${i + 1}. المعرف: ${m.id}، الاسم: ${m.name}`).join('\n');
 
   const prompt = `${PROMPTS.PRICE_INSIGHTS}
 
-Medicines list:
+قائمة الأدوية:
 ${list}`;
 
   try {

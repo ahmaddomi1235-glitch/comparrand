@@ -17,7 +17,7 @@ import { Button } from '../components/ui/Button';
 import { Alert } from '../components/ui/Alert';
 import { ROUTES } from '../constants';
 
-function GeminiResults({
+function AIResults({
   result,
   onSearch,
 }: {
@@ -37,7 +37,7 @@ function GeminiResults({
         <div className="flex items-center gap-2">
           <Sparkles size={18} className="text-primary" />
           <span className="font-semibold text-text-main">
-            اقتراحات Gemini لـ &quot;{result.query}&quot;
+            اقتراحات الذكاء الاصطناعي لـ &quot;{result.query}&quot;
           </span>
           {result.interpretedMedicineName && result.interpretedMedicineName !== result.query && (
             <span className="text-xs text-text-secondary bg-bg-surface border border-border-light px-2 py-0.5 rounded-full">
@@ -96,7 +96,7 @@ function GeminiResults({
           ))}
           <Alert variant="warning" className="mt-3">
             <span className="text-xs">
-              نتائج Gemini تقديرية وقد لا تعكس الواقع بدقة. تحقق دائمًا مع الصيدلاني.
+              نتائج الذكاء الاصطناعي تقديرية وقد لا تعكس الواقع بدقة. تحقق دائمًا مع الصيدلاني.
             </span>
           </Alert>
         </div>
@@ -111,8 +111,8 @@ export function SearchResultsPage() {
   const queryParam = searchParams.get('q') ?? '';
   const [query, setQuery] = useState(queryParam);
 
-  const [geminiLoading, setGeminiLoading] = useState(false);
-  const [geminiResult, setGeminiResult] = useState<GeminiSearchResult | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<GeminiSearchResult | null>(null);
 
   const { isFavorite, toggle } = useFavorites();
   const comparison = useComparison();
@@ -125,7 +125,7 @@ export function SearchResultsPage() {
 
   useEffect(() => {
     setQuery(queryParam);
-    setGeminiResult(null);
+    setAiResult(null);
   }, [queryParam]);
 
   const handleSearch = (q: string) => {
@@ -135,15 +135,15 @@ export function SearchResultsPage() {
     }
   };
 
-  const handleAskGemini = async () => {
+  const handleAskAI = async () => {
     if (!queryParam.trim()) return;
-    setGeminiLoading(true);
-    setGeminiResult(null);
+    setAiLoading(true);
+    setAiResult(null);
     try {
       const result = await searchMedicineWithGemini(queryParam);
-      setGeminiResult(result);
+      setAiResult(result);
     } finally {
-      setGeminiLoading(false);
+      setAiLoading(false);
     }
   };
 
@@ -208,31 +208,31 @@ export function SearchResultsPage() {
                   العودة للبحث
                 </Button>
                 <Button
-                  onClick={handleAskGemini}
-                  disabled={geminiLoading}
+                  onClick={handleAskAI}
+                  disabled={aiLoading}
                   icon={
-                    geminiLoading
+                    aiLoading
                       ? <Loader2 size={16} className="animate-spin" />
                       : <Sparkles size={16} />
                   }
                 >
-                  {geminiLoading ? 'جارٍ البحث في Gemini...' : 'لم أجد دوائي — اسأل Gemini'}
+                  {aiLoading ? 'جارٍ البحث...' : 'لم أجد دوائي — حلّل بالذكاء الاصطناعي'}
                 </Button>
               </div>
             }
           />
-          {!isGeminiConfigured() && !geminiResult && (
+          {!isGeminiConfigured() && !aiResult && (
             <Alert variant="info" className="mt-4 max-w-xl mx-auto">
               <span className="text-sm">
-                Gemini في وضع تجريبي. أضف{' '}
+                الذكاء الاصطناعي في وضع تجريبي. أضف{' '}
                 <code className="bg-info-bg/50 px-1 rounded font-mono text-xs">VITE_AI_API_ENDPOINT</code>{' '}
                 في .env للحصول على نتائج حقيقية.
               </span>
             </Alert>
           )}
-          {geminiResult && (
-            <GeminiResults
-              result={geminiResult}
+          {aiResult && (
+            <AIResults
+              result={aiResult}
               onSearch={(name) => handleSearch(name)}
             />
           )}

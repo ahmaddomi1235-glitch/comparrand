@@ -1,19 +1,22 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   BarChart2, Plus, X, Check, Printer,
   Bookmark, Pill, Sparkles, Loader2, ChevronDown, ChevronUp,
+  Camera, Upload, Image as ImageIcon,
 } from 'lucide-react';
 import { medicineService } from '../services/medicineService';
 import { comparisonService } from '../services/comparisonService';
 import { searchHistoryService } from '../services/searchHistoryService';
 import {
   compareMedicinesWithGemini,
+  analyzeMedicineImage,
   type GeminiCompareResult,
 } from '../services/GIMINI';
 import { getMatchLevel, formatPrice, priceDiff } from '../utils';
-import type { Medicine } from '../types';
-import { ROUTES } from '../constants';
+import { validateImageFile } from '../utils';
+import type { Medicine, ImageAnalysisResult } from '../types';
+import { ROUTES, IMAGE_UPLOAD } from '../constants';
 import { Badge } from '../components/ui/Badge';
 import { Alert } from '../components/ui/Alert';
 import { Button } from '../components/ui/Button';
@@ -46,7 +49,7 @@ function CompareRow({ label, values, highlight }: CompareRowProps) {
   );
 }
 
-function GeminiComparePanel({ result }: { result: GeminiCompareResult }) {
+function AIComparePanel({ result }: { result: GeminiCompareResult }) {
   const [expanded, setExpanded] = useState(true);
 
   const rows = [
@@ -68,7 +71,7 @@ function GeminiComparePanel({ result }: { result: GeminiCompareResult }) {
       >
         <div className="flex items-center gap-2">
           <Sparkles size={18} className="text-primary" />
-          <span className="font-semibold text-text-main">تحليل Gemini المتقدم</span>
+          <span className="font-semibold text-text-main">تحليل الذكاء الاصطناعي المتقدم</span>
           <span className="text-xs bg-bg-surface border border-border-light px-2 py-0.5 rounded-full text-text-secondary">
             ثقة {Math.round(result.confidence * 100)}%
           </span>
@@ -96,9 +99,222 @@ function GeminiComparePanel({ result }: { result: GeminiCompareResult }) {
           )}
           <Alert variant="warning">
             <span className="text-xs">
-              تحليل Gemini تقديري وغير مضمون. لا تستبدل الأدوية دون استشارة صيدلاني.
+              التحليل تقديري وغير مضمون. لا تستبدل الأدوية دون استشارة صيدلاني.
             </span>
           </Alert>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImageAnalysisPanel() {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<ImageAnalysisResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleFile = useCallback((selectedFile: File) => {
+    const validation = validateImageFile(selectedFile);
+    if (!validation.valid) {
+      setError(validation.error ?? 'ملف غير صالح');
+      return;
+    }
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    const url = URL.createObjectURL(selectedFile);
+    setFile(selectedFile);
+    setPreviewUrl(url);
+    setResult(null);
+    setError(null);
+  }, [previewUrl]);
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) handleFile(selectedFile);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const dropped = e.dataTransfer.files?.[0];
+    if (dropped) handleFile(dropped);
+  };
+
+  const handleAnalyze = async () => {
+    if (!file) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await analyzeMedicineImage(file);
+      setResult(res);
+    } catch {
+      setError('حدث خطأ أثناء التحليل. يرجى المحاولة مرة أخرى.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReset = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setFile(null);
+    setPreviewUrl(null);
+    setResult(null);
+    setError(null);
+  };
+
+  const [panelOpen, setPanelOpen] = useState(false);
+
+  return (
+    <div className="border border-primary/30 rounded-card bg-primary-light/10 overflow-hidden">
+      <button
+        onClick={() => setPanelOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-5 py-4 text-start hover:bg-primary-light/20 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Camera size={18} className="text-primary" />
+          <span className="font-semibold text-text-main">تحليل صورة دواء بالذكاء الاصطناعي</span>
+          <span className="text-xs text-text-secondary bg-bg-surface border border-border-light px-2 py-0.5 rounded-full">
+            استخراج معلومات من صورة العبوة
+          </span>
+        </div>
+        {panelOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+      </button>
+
+      {panelOpen && (
+        <div className="px-5 pb-5">
+          {!previewUrl ? (
+            <div
+              className={`border-2 border-dashed rounded-card p-8 text-center transition-all cursor-pointer ${
+                dragOver
+                  ? 'border-primary bg-primary-light/30'
+                  : 'border-secondary bg-bg-surface hover:border-primary hover:bg-primary-light/10'
+              }`}
+              onDrop={handleDrop}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onClick={() => fileInputRef.current?.click()}
+              role="button"
+              aria-label="منطقة رفع صورة الدواء"
+            >
+              <Upload size={36} className="text-secondary mx-auto mb-3" />
+              <p className="text-sm font-semibold text-text-main mb-1">
+                اسحب وأفلت صورة عبوة الدواء هنا
+              </p>
+              <p className="text-xs text-text-secondary mb-3">أو اضغط لاختيار صورة</p>
+              <div className="flex flex-wrap justify-center gap-1.5">
+                {IMAGE_UPLOAD.ALLOWED_EXTENSIONS.map((ext) => (
+                  <span key={ext} className="px-2 py-0.5 bg-border-light text-text-secondary text-xs rounded-full">
+                    {ext}
+                  </span>
+                ))}
+              </div>
+              <p className="text-xs text-text-secondary mt-2">
+                الحد الأقصى: {IMAGE_UPLOAD.MAX_SIZE_LABEL}
+              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={IMAGE_UPLOAD.ALLOWED_TYPES.join(',')}
+                onChange={handleFileInput}
+                className="hidden"
+                aria-label="اختر صورة دواء"
+              />
+            </div>
+          ) : (
+            <div className="bg-bg-surface border border-border-default rounded-card p-4">
+              <div className="relative mb-4">
+                <img
+                  src={previewUrl}
+                  alt="صورة الدواء"
+                  className="w-full max-h-48 object-contain rounded-card bg-bg-page"
+                />
+                <button
+                  onClick={handleReset}
+                  className="absolute top-2 end-2 w-7 h-7 rounded-full bg-white border border-border-default flex items-center justify-center hover:bg-danger-bg hover:text-danger-text transition-colors shadow"
+                  aria-label="إزالة الصورة"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              {file && (
+                <div className="flex items-center gap-2 text-xs text-text-secondary mb-3 p-2 bg-bg-page rounded-card">
+                  <ImageIcon size={14} />
+                  <span className="flex-1 truncate">{file.name}</span>
+                  <span>{(file.size / 1024).toFixed(0)} KB</span>
+                </div>
+              )}
+
+              {!loading && !result && (
+                <Button onClick={handleAnalyze} className="w-full" icon={<Sparkles size={16} />}>
+                  تحليل الصورة بالذكاء الاصطناعي
+                </Button>
+              )}
+
+              {loading && (
+                <div className="flex flex-col items-center gap-2 py-4">
+                  <Loader2 size={28} className="text-primary animate-spin" />
+                  <p className="text-sm text-text-secondary">جارٍ تحليل الصورة...</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {error && (
+            <Alert variant="danger" className="mt-3" onClose={handleReset}>
+              {error}
+            </Alert>
+          )}
+
+          {result && (
+            <div className="mt-4 bg-primary-light/20 border border-primary/20 rounded-card p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-6 h-6 rounded-full bg-success-bg flex items-center justify-center">
+                  <Check size={13} className="text-success-text" />
+                </div>
+                <h4 className="font-bold text-text-main text-sm">نتائج تحليل الصورة</h4>
+                <span className="mr-auto text-xs text-text-secondary bg-bg-surface border border-border-light px-2 py-0.5 rounded-full">
+                  ثقة {Math.round((result.confidence || 0) * 100)}%
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {[
+                  { label: 'اسم الدواء المستخرج', value: result.extractedMedicineName },
+                  { label: 'المادة الفعالة', value: result.extractedActiveIngredient },
+                  { label: 'التركيز', value: result.extractedConcentration },
+                ].map((item) => (
+                  <div key={item.label} className="bg-bg-surface rounded-card px-3 py-2 flex items-center justify-between gap-3">
+                    <span className="text-xs text-text-secondary">{item.label}</span>
+                    <span className="text-xs font-bold text-text-main">
+                      {item.value || <span className="text-text-secondary font-normal">غير محدد</span>}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {result.notes && (
+                <p className="text-xs text-text-secondary mt-3 leading-relaxed">{result.notes}</p>
+              )}
+
+              <Alert variant="warning" className="mt-3">
+                <span className="text-xs">
+                  نتائج تحليل الصورة أولية. تحقق من اسم الدواء المستخرج مع الصيدلاني قبل اتخاذ أي قرار.
+                </span>
+              </Alert>
+
+              <button
+                onClick={handleReset}
+                className="mt-3 text-xs text-primary hover:text-primary-hover underline transition-colors"
+              >
+                تحليل صورة أخرى
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -123,8 +339,8 @@ export function ComparePage() {
   const [searchResults, setSearchResults] = useState<Medicine[]>([]);
   const [showSearch, setShowSearch] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [geminiLoading, setGeminiLoading] = useState(false);
-  const [geminiResult, setGeminiResult] = useState<GeminiCompareResult | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<GeminiCompareResult | null>(null);
   const recentSearches = searchHistoryService.getAll();
 
   const medicines = useMemo(
@@ -168,10 +384,10 @@ export function ComparePage() {
     }
   };
 
-  const handleGeminiCompare = async () => {
+  const handleAICompare = async () => {
     if (medicines.length < 2) return;
-    setGeminiLoading(true);
-    setGeminiResult(null);
+    setAiLoading(true);
+    setAiResult(null);
     try {
       const result = await compareMedicinesWithGemini(
         medicines.map((m) => ({
@@ -183,9 +399,9 @@ export function ComparePage() {
           priceJOD: m.price,
         }))
       );
-      setGeminiResult(result);
+      setAiResult(result);
     } finally {
-      setGeminiLoading(false);
+      setAiLoading(false);
     }
   };
 
@@ -334,15 +550,15 @@ export function ComparePage() {
             </Button>
             <Button
               size="sm"
-              onClick={handleGeminiCompare}
-              disabled={geminiLoading}
+              onClick={handleAICompare}
+              disabled={aiLoading}
               icon={
-                geminiLoading
+                aiLoading
                   ? <Loader2 size={15} className="animate-spin" />
                   : <Sparkles size={15} />
               }
             >
-              {geminiLoading ? 'جارٍ التحليل...' : 'تحليل Gemini المتقدم'}
+              {aiLoading ? 'جارٍ التحليل...' : 'تحليل بالذكاء الاصطناعي'}
             </Button>
           </div>
 
@@ -494,7 +710,9 @@ export function ComparePage() {
             )}
           </div>
 
-          {geminiResult && <GeminiComparePanel result={geminiResult} />}
+          <ImageAnalysisPanel />
+
+          {aiResult && <AIComparePanel result={aiResult} />}
 
           <Alert variant="warning" title="قبل اتخاذ أي قرار">
             هذه المقارنة للأغراض التعليمية فقط. لا تستبدل الأدوية دون استشارة صيدلاني أو

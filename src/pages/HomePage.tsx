@@ -79,7 +79,7 @@ const WHY_US = [
   },
 ];
 
-function HomeGeminiPanel({
+function HomeAIPanel({
   result,
   onSearch,
 }: {
@@ -99,7 +99,7 @@ function HomeGeminiPanel({
         <div className="flex items-center gap-2">
           <Sparkles size={16} className="text-primary" />
           <span className="font-semibold text-sm text-text-main">
-            اقتراحات Gemini لـ &quot;{result.query}&quot;
+            اقتراحات الذكاء الاصطناعي لـ &quot;{result.query}&quot;
           </span>
         </div>
         {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -129,7 +129,7 @@ function HomeGeminiPanel({
             </div>
           ))}
           <p className="text-xs text-text-secondary text-center pt-1">
-            نتائج Gemini تقديرية — تحقق مع الصيدلاني
+            نتائج الذكاء الاصطناعي تقديرية — تحقق مع الصيدلاني
           </p>
         </div>
       )}
@@ -140,8 +140,8 @@ function HomeGeminiPanel({
 export function HomePage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
-  const [geminiLoading, setGeminiLoading] = useState(false);
-  const [geminiResult, setGeminiResult] = useState<GeminiSearchResult | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<GeminiSearchResult | null>(null);
   const { isFavorite, toggle } = useFavorites();
   const comparison = useComparison();
   const recentSearches = searchHistoryService.getAll();
@@ -153,16 +153,16 @@ export function HomePage() {
     navigate(`${ROUTES.SEARCH_RESULTS}?q=${encodeURIComponent(q.trim())}`);
   };
 
-  const handleAskGemini = async () => {
+  const handleAskAI = async () => {
     const q = query.trim();
     if (!q) return;
-    setGeminiLoading(true);
-    setGeminiResult(null);
+    setAiLoading(true);
+    setAiResult(null);
     try {
       const result = await searchMedicineWithGemini(q);
-      setGeminiResult(result);
+      setAiResult(result);
     } finally {
-      setGeminiLoading(false);
+      setAiLoading(false);
     }
   };
 
@@ -205,14 +205,14 @@ export function HomePage() {
 
           <div className="flex flex-wrap justify-center gap-3 mt-2">
             <button
-              onClick={handleAskGemini}
-              disabled={geminiLoading || !query.trim()}
+              onClick={handleAskAI}
+              disabled={aiLoading || !query.trim()}
               className="inline-flex items-center gap-2 text-sm text-primary hover:text-primary-hover transition-colors font-medium disabled:opacity-50"
             >
-              {geminiLoading
+              {aiLoading
                 ? <Loader2 size={16} className="animate-spin" />
                 : <Sparkles size={16} />}
-              لم أجد دوائي — اسأل Gemini
+              لم أجد دوائي — ابحث بالذكاء الاصطناعي
             </button>
             <span className="text-text-secondary text-sm">·</span>
             <Link
@@ -224,9 +224,9 @@ export function HomePage() {
             </Link>
           </div>
 
-          {geminiResult && (
-            <HomeGeminiPanel
-              result={geminiResult}
+          {aiResult && (
+            <HomeAIPanel
+              result={aiResult}
               onSearch={(name) => {
                 navigate(`${ROUTES.SEARCH_RESULTS}?q=${encodeURIComponent(name)}`);
               }}

@@ -84,17 +84,15 @@ export function ImageAnalysisPage() {
     }
   };
 
-  const geminiMode = getGeminiMode();
-  const geminiConfigured = isGeminiConfigured();
+  const aiMode = getGeminiMode();
+  void isGeminiConfigured();
 
   const modeLabel =
-    geminiMode === 'endpoint'
-      ? { variant: 'info' as const, text: 'AI مفعّل عبر خادم آمن (Endpoint)' }
-      : geminiMode === 'dev-key'
-      ? { variant: 'warning' as const, text: 'AI مفعّل — وضع تطوير محلي (المفتاح مكشوف في الـ bundle، لا تنشر هكذا)' }
-      : { variant: 'warning' as const, text: 'وضع تجريبي — أضف VITE_AI_API_ENDPOINT في .env للإنتاج، أو VITE_OPENAI_API_KEY للتطوير المحلي' };
-
-  void geminiConfigured;
+    aiMode === 'endpoint'
+      ? { variant: 'info' as const, text: 'الذكاء الاصطناعي مفعّل عبر خادم آمن' }
+      : aiMode === 'dev-key'
+      ? { variant: 'warning' as const, text: 'الذكاء الاصطناعي مفعّل — وضع تطوير محلي (المفتاح مكشوف في الـ bundle، لا تنشر هكذا)' }
+      : { variant: 'warning' as const, text: 'وضع تجريبي — أضف VITE_AI_API_ENDPOINT في .env للإنتاج' };
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -112,7 +110,7 @@ export function ImageAnalysisPage() {
 
       <Alert variant={modeLabel.variant} className="mb-6">
         <p>
-          <span className="font-semibold">حالة Gemini:</span> {modeLabel.text}
+          <span className="font-semibold">حالة التحليل الذكي:</span> {modeLabel.text}
         </p>
       </Alert>
 
@@ -252,7 +250,7 @@ export function ImageAnalysisPage() {
                 icon={<Search size={16} />}
                 className="flex-1"
               >
-                ابحث عن "{state.result.extractedMedicineName}"
+                ابحث عن &quot;{state.result.extractedMedicineName}&quot;
               </Button>
             )}
             <Button

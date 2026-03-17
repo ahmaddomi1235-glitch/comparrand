@@ -28,7 +28,7 @@ const defaultFilters: SearchFilters = {
   requiresPrescription: '',
 };
 
-function GeminiResults({
+function AIResults({
   result,
   onSearch,
 }: {
@@ -49,7 +49,7 @@ function GeminiResults({
         <div className="flex items-center gap-2 min-w-0">
           <Sparkles size={18} className="text-primary shrink-0" />
           <span className="font-semibold text-text-main truncate">
-            نتائج Gemini لـ &quot;{result.query}&quot;
+            نتائج الذكاء الاصطناعي لـ &quot;{result.query}&quot;
           </span>
           {result.interpretedMedicineName &&
             result.interpretedMedicineName !== result.query && (
@@ -136,7 +136,7 @@ function GeminiResults({
 
           <Alert variant="warning" className="mt-1">
             <span className="text-xs">
-              نتائج Gemini تقديرية وقد لا تعكس الواقع بدقة. تحقق دائمًا مع
+              نتائج الذكاء الاصطناعي تقديرية وقد لا تعكس الواقع بدقة. تحقق دائمًا مع
               الصيدلاني.
             </span>
           </Alert>
@@ -152,9 +152,9 @@ export function SearchPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [searched, setSearched] = useState(false);
 
-  const [geminiLoading, setGeminiLoading] = useState(false);
-  const [geminiResult, setGeminiResult] = useState<GeminiSearchResult | null>(null);
-  const [geminiEmptyWarning, setGeminiEmptyWarning] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<GeminiSearchResult | null>(null);
+  const [aiEmptyWarning, setAiEmptyWarning] = useState(false);
 
   const { isFavorite, toggle } = useFavorites();
   const comparison = useComparison();
@@ -177,28 +177,28 @@ export function SearchPage() {
     if (q.trim()) searchHistoryService.add(q);
     setFilters((prev) => ({ ...prev, query: q }));
     setSearched(true);
-    setGeminiResult(null);
-    setGeminiEmptyWarning(false);
+    setAiResult(null);
+    setAiEmptyWarning(false);
   };
 
   const resetFilters = () => {
     setFilters(defaultFilters);
     setSearched(false);
-    setGeminiResult(null);
-    setGeminiEmptyWarning(false);
+    setAiResult(null);
+    setAiEmptyWarning(false);
   };
 
-  const handleAskGemini = async () => {
+  const handleAskAI = async () => {
     const q = filters.query.trim();
 
     if (!q) {
-      setGeminiEmptyWarning(true);
+      setAiEmptyWarning(true);
       return;
     }
 
-    setGeminiEmptyWarning(false);
-    setGeminiLoading(true);
-    setGeminiResult(null);
+    setAiEmptyWarning(false);
+    setAiLoading(true);
+    setAiResult(null);
 
     const contextParts: string[] = [q];
     if (filters.category) contextParts.push(`تصنيف: ${filters.category}`);
@@ -215,9 +215,9 @@ export function SearchPage() {
 
     try {
       const result = await searchMedicineWithGemini(enrichedQuery);
-      setGeminiResult(result);
+      setAiResult(result);
     } finally {
-      setGeminiLoading(false);
+      setAiLoading(false);
     }
   };
 
@@ -246,7 +246,7 @@ export function SearchPage() {
           value={filters.query}
           onChange={(q) => {
             setFilters((prev) => ({ ...prev, query: q }));
-            if (geminiEmptyWarning) setGeminiEmptyWarning(false);
+            if (aiEmptyWarning) setAiEmptyWarning(false);
           }}
           onSearch={handleSearch}
           size="lg"
@@ -284,33 +284,33 @@ export function SearchPage() {
               لم تجد الدواء الذي تبحث عنه؟
             </p>
             <p className="text-xs text-text-secondary mt-0.5">
-              اكتب اسمه في شريط البحث واضغط الزر — سيبحث Gemini عنه في السوق الأردني
+              اكتب اسمه في شريط البحث واضغط الزر — سيبحث الذكاء الاصطناعي عنه في السوق الأردني
             </p>
           </div>
         </div>
         <button
-          onClick={handleAskGemini}
-          disabled={geminiLoading}
+          onClick={handleAskAI}
+          disabled={aiLoading}
           className={`
             flex items-center justify-center gap-2 px-5 py-2.5 rounded-btn font-semibold text-sm
             transition-all duration-200 shrink-0 w-full sm:w-auto
-            ${geminiLoading
+            ${aiLoading
               ? 'bg-primary/70 text-white cursor-not-allowed'
               : 'bg-primary text-white hover:bg-primary-hover active:scale-95 shadow-sm hover:shadow-md'
             }
           `}
         >
-          {geminiLoading ? (
+          {aiLoading ? (
             <Loader2 size={16} className="animate-spin" />
           ) : (
             <Sparkles size={16} />
           )}
-          {geminiLoading ? 'جارٍ البحث...' : 'لم أجد دوائي — اسأل Gemini'}
+          {aiLoading ? 'جارٍ البحث...' : 'لم أجد دوائي — ابحث بالذكاء الاصطناعي'}
         </button>
       </div>
 
-      {geminiEmptyWarning && (
-        <Alert variant="info" className="mb-4" onClose={() => setGeminiEmptyWarning(false)}>
+      {aiEmptyWarning && (
+        <Alert variant="info" className="mb-4" onClose={() => setAiEmptyWarning(false)}>
           <span className="text-sm">
             ✍️ من فضلك أدخل اسم الدواء أو المادة الفعالة في شريط البحث أولًا، ثم اضغط
             الزر مرة أخرى.
@@ -440,7 +440,7 @@ export function SearchPage() {
           <p className="text-text-secondary text-sm mb-4 max-w-sm mx-auto">
             لم نجد أدوية تطابق بحثك في قاعدة البيانات المحلية.
             <br />
-            جرّب تغيير الكلمة المفتاحية أو استخدم زر Gemini أعلاه.
+            جرّب تغيير الكلمة المفتاحية أو استخدم زر الذكاء الاصطناعي أعلاه.
           </p>
           <Button variant="outline" size="sm" onClick={resetFilters}>
             <RotateCcw size={14} />
@@ -485,10 +485,10 @@ export function SearchPage() {
         </>
       )}
 
-      {geminiResult && (
+      {aiResult && (
         <div className="mt-8">
-          <GeminiResults
-            result={geminiResult}
+          <AIResults
+            result={aiResult}
             onSearch={(name) =>
               navigate(`${ROUTES.SEARCH_RESULTS}?q=${encodeURIComponent(name)}`)
             }
