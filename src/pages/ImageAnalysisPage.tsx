@@ -89,10 +89,10 @@ export function ImageAnalysisPage() {
 
   const modeLabel =
     geminiMode === 'endpoint'
-      ? { variant: 'info' as const, text: 'Gemini مفعّل عبر خادم آمن (Endpoint)' }
+      ? { variant: 'info' as const, text: 'AI مفعّل عبر خادم آمن (Endpoint)' }
       : geminiMode === 'dev-key'
-      ? { variant: 'warning' as const, text: 'Gemini مفعّل — وضع تطوير محلي (المفتاح مكشوف في الـ bundle، لا تنشر هكذا)' }
-      : { variant: 'warning' as const, text: 'وضع تجريبي — أضف VITE_GEMINI_API_ENDPOINT في .env للإنتاج، أو VITE_GEMINI_API_KEY للتطوير المحلي' };
+      ? { variant: 'warning' as const, text: 'AI مفعّل — وضع تطوير محلي (المفتاح مكشوف في الـ bundle، لا تنشر هكذا)' }
+      : { variant: 'warning' as const, text: 'وضع تجريبي — أضف VITE_AI_API_ENDPOINT في .env للإنتاج، أو VITE_OPENAI_API_KEY للتطوير المحلي' };
 
   void geminiConfigured;
 

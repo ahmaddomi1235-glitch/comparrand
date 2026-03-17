@@ -52,12 +52,13 @@ export interface GeminiPriceInsight {
   needsReview: boolean;
 }
 
-const GEMINI_ENDPOINT_PROXY = import.meta.env.VITE_GEMINI_API_ENDPOINT as string | undefined;
+const AI_ENDPOINT_PROXY = import.meta.env.VITE_AI_API_ENDPOINT as string | undefined;
 
-const GEMINI_DEV_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+const AI_DEV_KEY = import.meta.env.VITE_OPENAI_API_KEY as string | undefined;
 
-const GEMINI_DIRECT_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent';
+const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
+
+const AI_MODEL = 'gpt-4o';
 
 const PROMPTS = {
 
@@ -192,11 +193,11 @@ Return JSON array:
 
 export function getGeminiMode(): GeminiMode {
   const hasEndpoint =
-    typeof GEMINI_ENDPOINT_PROXY === 'string' && GEMINI_ENDPOINT_PROXY.trim() !== '';
+    typeof AI_ENDPOINT_PROXY === 'string' && AI_ENDPOINT_PROXY.trim() !== '';
   if (hasEndpoint) return 'endpoint';
 
   const hasDevKey =
-    typeof GEMINI_DEV_KEY === 'string' && GEMINI_DEV_KEY.trim() !== '';
+    typeof AI_DEV_KEY === 'string' && AI_DEV_KEY.trim() !== '';
   if (hasDevKey) return 'dev-key';
 
   return 'mock';
@@ -206,93 +207,65 @@ export function isGeminiConfigured(): boolean {
   return getGeminiMode() !== 'mock';
 }
 
-function buildRequestUrl(): string {
+type OpenAITextContent = { type: 'text'; text: string };
+type OpenAIImageContent = { type: 'image_url'; image_url: { url: string } };
+type OpenAIMessage = {
+  role: 'user';
+  content: string | Array<OpenAITextContent | OpenAIImageContent>;
+};
+
+async function callAI(messages: OpenAIMessage[], maxTokens: number): Promise<string> {
   const mode = getGeminiMode();
-  if (mode === 'endpoint') return GEMINI_ENDPOINT_PROXY!.trim();
-  if (mode === 'dev-key') {
-    return `${GEMINI_DIRECT_URL}?key=${encodeURIComponent(GEMINI_DEV_KEY!.trim())}`;
-  }
-  throw new Error('GIMINI: لا يوجد endpoint أو مفتاح Gemini مُعدّ');
-}
+  if (mode === 'mock') throw new Error('GIMINI: لا يوجد endpoint أو مفتاح مُعدّ');
 
-async function callGeminiText(prompt: string): Promise<string> {
-  const url = buildRequestUrl();
   const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 2048,
-      responseMimeType: 'application/json',
-    },
+    model: AI_MODEL,
+    messages,
+    temperature: 0.1,
+    max_tokens: maxTokens,
+    response_format: { type: 'json_object' as const },
   };
+
+  let url: string;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+  if (mode === 'endpoint') {
+    url = AI_ENDPOINT_PROXY!.trim();
+  } else {
+    url = OPENAI_API_URL;
+    headers['Authorization'] = `Bearer ${AI_DEV_KEY!.trim()}`;
+  }
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
 
   if (!res.ok) {
     const errorText = await res.text().catch(() => '');
-    throw new Error(`Gemini API ${res.status}: ${errorText.slice(0, 200)}`);
+    throw new Error(`AI API ${res.status}: ${errorText.slice(0, 200)}`);
   }
 
-  return extractTextFromGeminiEnvelope(await res.json());
+  return extractTextFromAIResponse(await res.json());
 }
 
-async function callGeminiWithImage(file: File, prompt: string): Promise<string> {
-  const url = buildRequestUrl();
-  const base64 = await fileToBase64(file);
-
-  const body = {
-    contents: [
-      {
-        parts: [
-          { text: prompt },
-          { inlineData: { mimeType: file.type, data: base64 } },
-        ],
-      },
-    ],
-    generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 1024,
-      responseMimeType: 'application/json',
-    },
-  };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text().catch(() => '');
-    throw new Error(`Gemini API ${res.status}: ${errorText.slice(0, 200)}`);
-  }
-
-  return extractTextFromGeminiEnvelope(await res.json());
-}
-
-function extractTextFromGeminiEnvelope(data: unknown): string {
-  if (!data || typeof data !== 'object') throw new Error('استجابة Gemini غير صالحة');
+function extractTextFromAIResponse(data: unknown): string {
+  if (!data || typeof data !== 'object') throw new Error('استجابة AI غير صالحة');
 
   const d = data as Record<string, unknown>;
-  const candidates = d.candidates;
-  if (!Array.isArray(candidates) || candidates.length === 0) {
-    throw new Error('لا يوجد candidates في استجابة Gemini');
+  const choices = d.choices;
+  if (!Array.isArray(choices) || choices.length === 0) {
+    throw new Error('لا يوجد choices في استجابة AI');
   }
 
-  const content = (candidates[0] as Record<string, unknown>).content;
-  if (!content || typeof content !== 'object') throw new Error('لا يوجد content في الـ candidate');
+  const message = (choices[0] as Record<string, unknown>).message;
+  if (!message || typeof message !== 'object') throw new Error('لا يوجد message في الـ choice');
 
-  const parts = (content as Record<string, unknown>).parts;
-  if (!Array.isArray(parts) || parts.length === 0) throw new Error('لا يوجد parts في الـ content');
+  const content = (message as Record<string, unknown>).content;
+  if (typeof content !== 'string') throw new Error('لا يوجد نص في AI response');
 
-  const text = (parts[0] as Record<string, unknown>).text;
-  if (typeof text !== 'string') throw new Error('لا يوجد نص في Gemini part');
-
-  return text;
+  return content;
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -317,13 +290,9 @@ export function parseGeminiResponse<T>(text: string): T {
     .trim();
 
   const parsed: unknown = JSON.parse(stripped);
-  if (!parsed || typeof parsed !== 'object') throw new Error('Gemini أعاد JSON غير صالح');
+  if (!parsed || typeof parsed !== 'object') throw new Error('AI أعاد JSON غير صالح');
   return parsed as T;
 }
-
-// ============================================================
-// Mock fallbacks — عند غياب أي إعداد
-// ============================================================
 
 function mockImageResult(fileName: string): ImageAnalysisResult {
   const examples: ImageAnalysisResult[] = [
@@ -333,7 +302,7 @@ function mockImageResult(fileName: string): ImageAnalysisResult {
       extractedConcentration: '500 مجم',
       confidence: 0.85,
       rawText: 'Panadol 500mg Paracetamol — GSK Jordan',
-      notes: 'وضع تجريبي — Gemini غير مفعّل. أضف VITE_GEMINI_API_ENDPOINT في .env للإنتاج، أو VITE_GEMINI_API_KEY للتطوير المحلي.',
+      notes: 'وضع تجريبي — AI غير مفعّل. أضف VITE_AI_API_ENDPOINT في .env للإنتاج، أو VITE_OPENAI_API_KEY للتطوير المحلي.',
     },
     {
       extractedMedicineName: 'بروفين 400',
@@ -341,7 +310,7 @@ function mockImageResult(fileName: string): ImageAnalysisResult {
       extractedConcentration: '400 مجم',
       confidence: 0.78,
       rawText: 'Brufen 400mg Ibuprofen',
-      notes: 'وضع تجريبي — Gemini غير مفعّل. أضف VITE_GEMINI_API_ENDPOINT في .env للإنتاج، أو VITE_GEMINI_API_KEY للتطوير المحلي.',
+      notes: 'وضع تجريبي — AI غير مفعّل. أضف VITE_AI_API_ENDPOINT في .env للإنتاج، أو VITE_OPENAI_API_KEY للتطوير المحلي.',
     },
     {
       extractedMedicineName: 'نيكسيوم 20',
@@ -349,7 +318,7 @@ function mockImageResult(fileName: string): ImageAnalysisResult {
       extractedConcentration: '20 مجم',
       confidence: 0.9,
       rawText: 'Nexium 20mg Esomeprazole — AstraZeneca',
-      notes: 'وضع تجريبي — Gemini غير مفعّل. أضف VITE_GEMINI_API_ENDPOINT في .env للإنتاج، أو VITE_GEMINI_API_KEY للتطوير المحلي.',
+      notes: 'وضع تجريبي — AI غير مفعّل. أضف VITE_AI_API_ENDPOINT في .env للإنتاج، أو VITE_OPENAI_API_KEY للتطوير المحلي.',
     },
   ];
   const idx = (fileName.length + (fileName.charCodeAt(0) || 0)) % examples.length;
@@ -373,7 +342,7 @@ function mockSearchResult(query: string): GeminiSearchResult {
         packageOptions: '20 قرص',
         alternatives: '',
         confidence: 0,
-        notes: 'وضع تجريبي — أضف VITE_GEMINI_API_ENDPOINT في .env للنتائج الحقيقية.',
+        notes: 'وضع تجريبي — أضف VITE_AI_API_ENDPOINT في .env للنتائج الحقيقية.',
         warnings: '',
       },
     ],
@@ -383,7 +352,7 @@ function mockSearchResult(query: string): GeminiSearchResult {
 function mockCompareResult(names: string[]): GeminiCompareResult {
   return {
     medicinesCompared: names,
-    comparisonSummary: 'وضع تجريبي — Gemini غير مفعّل للمقارنة المتقدمة.',
+    comparisonSummary: 'وضع تجريبي — AI غير مفعّل للمقارنة المتقدمة.',
     activeIngredientDifferences: '',
     strengthDifferences: '',
     dosageFormDifferences: '',
@@ -391,26 +360,28 @@ function mockCompareResult(names: string[]): GeminiCompareResult {
     packageSizeComparison: '',
     alternatives: '',
     warnings: [],
-    notes: 'أضف VITE_GEMINI_API_ENDPOINT في .env للحصول على مقارنة حقيقية.',
+    notes: 'أضف VITE_AI_API_ENDPOINT في .env للحصول على مقارنة حقيقية.',
     confidence: 0,
     needsReview: true,
   };
 }
 
-// ============================================================
-// Public API — الدوال المصدّرة
-// ============================================================
-
-/**
- * تحليل صورة دواء باستخدام Gemini
- *
- * يُستخدم في: ImageAnalysisPage
- */
 export async function analyzeMedicineImage(file: File): Promise<ImageAnalysisResult> {
   if (getGeminiMode() === 'mock') return mockImageResult(file.name);
 
   try {
-    const text = await callGeminiWithImage(file, PROMPTS.IMAGE_ANALYSIS);
+    const base64 = await fileToBase64(file);
+    const messages: OpenAIMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: PROMPTS.IMAGE_ANALYSIS },
+          { type: 'image_url', image_url: { url: `data:${file.type};base64,${base64}` } },
+        ],
+      },
+    ];
+
+    const text = await callAI(messages, 1024);
     const raw = parseGeminiResponse<Record<string, unknown>>(text);
 
     const confidence =
@@ -445,17 +416,12 @@ export async function analyzeMedicineImage(file: File): Promise<ImageAnalysisRes
     const mock = mockImageResult(file.name);
     return {
       ...mock,
-      notes: `خطأ أثناء الاتصال بـ Gemini: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
+      notes: `خطأ أثناء الاتصال بـ AI: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
       confidence: 0,
     };
   }
 }
 
-/**
- * البحث عن دواء غير موجود محليًا باستخدام Gemini
- *
- * يُستخدم في: SearchPage, SearchResultsPage, HomePage — زر "لم أجد دوائي"
- */
 export async function searchMedicineWithGemini(query: string): Promise<GeminiSearchResult> {
   if (getGeminiMode() === 'mock') return mockSearchResult(query);
 
@@ -464,7 +430,8 @@ export async function searchMedicineWithGemini(query: string): Promise<GeminiSea
 User query: "${query}"`;
 
   try {
-    const text = await callGeminiText(prompt);
+    const messages: OpenAIMessage[] = [{ role: 'user', content: prompt }];
+    const text = await callAI(messages, 2048);
     return parseGeminiResponse<GeminiSearchResult>(text);
   } catch (error) {
     console.error('[GIMINI] searchMedicineWithGemini failed:', error);
@@ -474,17 +441,12 @@ User query: "${query}"`;
       suggestions: mock.suggestions.map((s) => ({
         ...s,
         confidence: 0,
-        notes: `خطأ أثناء الاتصال بـ Gemini: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
+        notes: `خطأ أثناء الاتصال بـ AI: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
       })),
     };
   }
 }
 
-/**
- * مقارنة أدوية باستخدام Gemini (مقارنة متقدمة)
- *
- * يُستخدم في: ComparePage
- */
 export async function compareMedicinesWithGemini(
   medicines: Array<{
     name: string;
@@ -516,23 +478,19 @@ Medicines to compare:
 ${medicineList}`;
 
   try {
-    const text = await callGeminiText(prompt);
+    const messages: OpenAIMessage[] = [{ role: 'user', content: prompt }];
+    const text = await callAI(messages, 2048);
     return parseGeminiResponse<GeminiCompareResult>(text);
   } catch (error) {
     console.error('[GIMINI] compareMedicinesWithGemini failed:', error);
     const mock = mockCompareResult(names);
     return {
       ...mock,
-      notes: `خطأ أثناء الاتصال بـ Gemini: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
+      notes: `خطأ أثناء الاتصال بـ AI: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
     };
   }
 }
 
-/**
- * جلب رؤى أسعار الأردن للأدوية (للتحديث الدوري كل 3 أيام)
- *
- * يُستخدم في: وظائف التحديث المجدولة
- */
 export async function fetchJordanPriceInsights(
   medicines: Array<{ id: string; name: string }>
 ): Promise<GeminiPriceInsight[]> {
@@ -544,7 +502,7 @@ export async function fetchJordanPriceInsights(
       packageOptions: '',
       availability: '',
       confidence: 0,
-      notes: 'وضع تجريبي — أضف VITE_GEMINI_API_ENDPOINT للتفعيل.',
+      notes: 'وضع تجريبي — أضف VITE_AI_API_ENDPOINT للتفعيل.',
       updatedAt: new Date().toISOString(),
       needsReview: true,
     }));
@@ -558,7 +516,8 @@ Medicines list:
 ${list}`;
 
   try {
-    const text = await callGeminiText(prompt);
+    const messages: OpenAIMessage[] = [{ role: 'user', content: prompt }];
+    const text = await callAI(messages, 2048);
     return parseGeminiResponse<GeminiPriceInsight[]>(text);
   } catch (error) {
     console.error('[GIMINI] fetchJordanPriceInsights failed:', error);

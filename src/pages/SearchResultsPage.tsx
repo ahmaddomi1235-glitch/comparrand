@@ -225,7 +225,7 @@ export function SearchResultsPage() {
             <Alert variant="info" className="mt-4 max-w-xl mx-auto">
               <span className="text-sm">
                 Gemini في وضع تجريبي. أضف{' '}
-                <code className="bg-info-bg/50 px-1 rounded font-mono text-xs">VITE_GEMINI_API_ENDPOINT</code>{' '}
+                <code className="bg-info-bg/50 px-1 rounded font-mono text-xs">VITE_AI_API_ENDPOINT</code>{' '}
                 في .env للحصول على نتائج حقيقية.
               </span>
             </Alert>

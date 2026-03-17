@@ -12,13 +12,11 @@ interface VercelResponse {
   setHeader(name: string, value: string | string[]): void;
 }
 
-const GEMINI_DIRECT_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent';
+const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 
 function getAllowedOrigin(): string {
   const origin = process.env.ALLOWED_ORIGIN;
   if (origin && origin.trim() !== '') return origin.trim();
-
   return '*';
 }
 
@@ -43,12 +41,12 @@ export default async function handler(
     return;
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || apiKey.trim() === '') {
-    console.error('[api/gemini] GEMINI_API_KEY is not set in server environment');
+    console.error('[api/gemini] OPENAI_API_KEY is not set in server environment');
     res.status(500).json({
-      error: 'Gemini API key not configured on server',
-      hint: 'Set GEMINI_API_KEY in Vercel Environment Variables (no VITE_ prefix)',
+      error: 'OpenAI API key not configured on server',
+      hint: 'Set OPENAI_API_KEY in Vercel Environment Variables',
     });
     return;
   }
@@ -59,22 +57,21 @@ export default async function handler(
   }
 
   try {
-    const geminiRes = await fetch(
-      `${GEMINI_DIRECT_URL}?key=${encodeURIComponent(apiKey.trim())}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(req.body),
-      }
-    );
+    const openaiRes = await fetch(OPENAI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey.trim()}`,
+      },
+      body: JSON.stringify(req.body),
+    });
 
-    const data: unknown = await geminiRes.json();
-
-    res.status(geminiRes.status).json(data);
+    const data: unknown = await openaiRes.json();
+    res.status(openaiRes.status).json(data);
   } catch (error) {
-    console.error('[api/gemini] Failed to contact Gemini:', error);
+    console.error('[api/gemini] Failed to contact OpenAI:', error);
     res.status(502).json({
-      error: 'Failed to contact Gemini API',
+      error: 'Failed to contact OpenAI API',
       detail: error instanceof Error ? error.message.slice(0, 200) : 'Unknown error',
     });
   }
