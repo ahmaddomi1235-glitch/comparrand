@@ -1,15 +1,15 @@
-import type { IncomingMessage } from 'node:http';
-
-interface VercelRequest extends IncomingMessage {
+interface VercelRequest {
+  method?: string;
   body: unknown;
   query: Record<string, string | string[]>;
+  headers: Record<string, string | string[] | undefined>;
 }
 
 interface VercelResponse {
   status(code: number): VercelResponse;
   json(data: unknown): void;
   end(): void;
-  setHeader(name: string, value: string): void;
+  setHeader(name: string, value: string | string[]): void;
 }
 
 const GEMINI_DIRECT_URL =
