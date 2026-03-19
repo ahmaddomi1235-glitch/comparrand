@@ -46,6 +46,8 @@ export function ImageAnalysisPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
   const [cameraError, setCameraError] = useState<string>('');
+  // true بعد أن يبدأ تدفق الفيديو فعلياً (loadedmetadata)
+  const [videoReady, setVideoReady] = useState(false);
 
   // إيقاف الكاميرا عند الخروج من الصفحة أو تغيير الوضع
   const stopCamera = useCallback(() => {
@@ -56,6 +58,7 @@ export function ImageAnalysisPage() {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    setVideoReady(false);
     setCameraStatus('idle');
     setCameraError('');
   }, []);
@@ -66,12 +69,55 @@ export function ImageAnalysisPage() {
     };
   }, [stopCamera]);
 
+  // ---------------------------------------------------------------
+  // FIX: Attach the media stream to the video element AFTER React
+  // has rendered it into the DOM.  The <video> tag is conditionally
+  // rendered only when cameraStatus === 'active', so videoRef.current
+  // is null before that state change.  Waiting for the effect (which
+  // runs after the DOM update) guarantees the ref is valid.
+  // ---------------------------------------------------------------
+  useEffect(() => {
+    if (cameraStatus !== 'active') return;
+
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!video || !stream) return;
+
+    video.srcObject = stream;
+
+    const tryPlay = () => {
+      video.play().catch((e) => {
+        // AbortError is common if the element is removed before play resolves
+        if ((e as Error).name !== 'AbortError') {
+          console.warn('[Camera] play() failed:', e);
+        }
+      });
+    };
+
+    // loadedmetadata fires once the browser knows video dimensions.
+    // On mobile Safari, calling play() before this event causes a silent failure.
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      // Metadata already available (rare but possible on fast devices)
+      tryPlay();
+    } else {
+      video.addEventListener('loadedmetadata', tryPlay, { once: true });
+    }
+
+    // Mark video as ready so the capture button becomes active
+    const handleCanPlay = () => setVideoReady(true);
+    video.addEventListener('canplay', handleCanPlay, { once: true });
+
+    return () => {
+      video.removeEventListener('loadedmetadata', tryPlay);
+      video.removeEventListener('canplay', handleCanPlay);
+    };
+  }, [cameraStatus]);
+
   const handleSwitchMode = (mode: InputMode) => {
     if (mode !== inputMode) {
       stopCamera();
       setCameraStatus('idle');
       setCameraError('');
-      // إعادة تعيين الملف والنتائج عند تبديل الوضع
       if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
       setFile(null);
       setState(INITIAL_STATE);
@@ -109,21 +155,34 @@ export function ImageAnalysisPage() {
   const startCamera = async () => {
     setCameraStatus('requesting');
     setCameraError('');
+    setVideoReady(false);
+
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         setCameraStatus('unavailable');
         setCameraError('الكاميرا غير مدعومة في هذا المتصفح أو الجهاز.');
         return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+
+      let stream: MediaStream;
+      try {
+        // Use { ideal: 'environment' } so the browser prefers the back camera
+        // but does NOT throw OverconstrainedError on desktop (unlike exact: 'environment').
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false,
+        });
+      } catch {
+        // Fallback: request any available camera without constraints
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       }
+
+      streamRef.current = stream;
+
+      // Set status to 'active' HERE — this triggers a React re-render that
+      // mounts the <video> element into the DOM.  The useEffect above then
+      // runs (after the DOM update) and safely assigns stream to srcObject.
+      // Do NOT assign srcObject here; videoRef.current is still null at this point.
       setCameraStatus('active');
     } catch (err) {
       const error = err as Error;
@@ -145,8 +204,15 @@ export function ImageAnalysisPage() {
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
 
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    // Guard: ensure the video is actually streaming frames.
+    // videoWidth === 0 means no frame data yet → would produce a black image.
+    if (!video.videoWidth || !video.videoHeight || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      setCameraError('الكاميرا لم تجهز بعد. يرجى الانتظار لحظة والمحاولة مرة أخرى.');
+      return;
+    }
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -380,6 +446,13 @@ export function ImageAnalysisPage() {
           {cameraStatus === 'active' && (
             <div>
               <div className="relative bg-black">
+                {/*
+                  autoPlay    — lets browser start playback without user gesture (required on most browsers)
+                  playsInline — required on iOS Safari to prevent fullscreen takeover
+                  muted       — required for autoplay policies in Chrome/Safari
+                  The stream is attached via useEffect after this element mounts,
+                  because videoRef.current is null until cameraStatus becomes 'active'.
+                */}
                 <video
                   ref={videoRef}
                   autoPlay
@@ -387,6 +460,12 @@ export function ImageAnalysisPage() {
                   muted
                   className="w-full max-h-80 object-contain"
                 />
+                {/* Show a subtle spinner overlay while stream is buffering */}
+                {!videoReady && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Loader2 size={32} className="text-white/70 animate-spin" />
+                  </div>
+                )}
                 <button
                   onClick={stopCamera}
                   className="absolute top-3 end-3 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition-colors"
@@ -399,8 +478,16 @@ export function ImageAnalysisPage() {
                 <p className="text-text-secondary text-xs mb-3">
                   وجّه الكاميرا نحو عبوة الدواء بوضوح، ثم اضغط لالتقاط الصورة
                 </p>
-                <Button onClick={capturePhoto} icon={<Camera size={18} />} size="lg">
-                  التقاط الصورة
+                {cameraError && (
+                  <p className="text-xs text-danger-text mb-2">{cameraError}</p>
+                )}
+                <Button
+                  onClick={capturePhoto}
+                  icon={<Camera size={18} />}
+                  size="lg"
+                  disabled={!videoReady}
+                >
+                  {videoReady ? 'التقاط الصورة' : 'جارٍ تحضير الكاميرا...'}
                 </Button>
               </div>
             </div>
