@@ -180,7 +180,8 @@ export function ImageAnalysisPage() {
     try {
       const result = await analyzeMedicineImage(file);
       setState((prev) => ({ ...prev, status: 'success', result }));
-    } catch {
+    } catch (err) {
+      console.error('[ImageAnalysisPage] analyze failed:', err);
       setState((prev) => ({
         ...prev,
         status: 'error',
@@ -331,7 +332,7 @@ export function ImageAnalysisPage() {
                   <span>{(file.size / 1024).toFixed(0)} KB</span>
                 </div>
               )}
-              {state.status === 'idle' && (
+              {(state.status === 'idle' || state.status === 'error') && (
                 <Button onClick={handleAnalyze} size="lg" className="w-full" icon={<Search size={18} />}>
                   تحليل الصورة
                 </Button>
@@ -486,7 +487,7 @@ export function ImageAnalysisPage() {
             </button>
           </div>
           <div className="flex gap-2">
-            {state.status === 'idle' && (
+            {(state.status === 'idle' || state.status === 'error') && (
               <>
                 <Button onClick={handleAnalyze} size="lg" className="flex-1" icon={<Search size={18} />}>
                   تحليل الصورة

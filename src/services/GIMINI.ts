@@ -292,17 +292,76 @@ function extractTextFromAIResponse(data: unknown): string {
   return content;
 }
 
-function fileToBase64(file: File): Promise<string> {
+/**
+ * Compresses and base64-encodes an image before sending to the AI proxy.
+ * Images larger than 1.5 MB are resized (max 1500 px on longest side)
+ * and re-encoded as JPEG at 0.82 quality so the full JSON payload stays
+ * well under Vercel's 4.5 MB serverless body limit.
+ */
+async function compressImageToBase64(
+  file: File,
+): Promise<{ base64: string; mimeType: string }> {
+  const COMPRESS_THRESHOLD = 1.5 * 1024 * 1024; // compress files > 1.5 MB
+  const MAX_DIMENSION = 1500;
+  const JPEG_QUALITY = 0.82;
+
+  // Small files: encode directly without touching quality
+  if (file.size <= COMPRESS_THRESHOLD) {
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const b64 = result.split(',')[1];
+        if (!b64) reject(new Error('فشل ترميز الصورة إلى base64'));
+        else resolve(b64);
+      };
+      reader.onerror = () => reject(new Error('FileReader error'));
+      reader.readAsDataURL(file);
+    });
+    return { base64, mimeType: file.type || 'image/jpeg' };
+  }
+
+  // Large files: resize + JPEG-compress via an off-screen canvas
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const b64 = result.split(',')[1];
-      if (!b64) reject(new Error('فشل ترميز الصورة إلى base64'));
-      else resolve(b64);
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+
+      const canvas = document.createElement('canvas');
+      let { width, height } = img;
+
+      if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+        const ratio = Math.min(MAX_DIMENSION / width, MAX_DIMENSION / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Canvas 2D context not available'));
+        return;
+      }
+
+      ctx.drawImage(img, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+      const b64 = dataUrl.split(',')[1];
+      if (!b64) {
+        reject(new Error('فشل ضغط الصورة'));
+        return;
+      }
+      resolve({ base64: b64, mimeType: 'image/jpeg' });
     };
-    reader.onerror = () => reject(new Error('FileReader error'));
-    reader.readAsDataURL(file);
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('فشل تحميل الصورة للضغط'));
+    };
+
+    img.src = objectUrl;
   });
 }
 
@@ -394,13 +453,15 @@ export async function analyzeMedicineImage(file: File): Promise<ImageAnalysisRes
   if (getGeminiMode() === 'mock') return mockImageResult(file.name);
 
   try {
-    const base64 = await fileToBase64(file);
+    // Compress large images before encoding to stay under Vercel's 4.5 MB body limit
+    const { base64, mimeType } = await compressImageToBase64(file);
+
     const messages: OpenAIMessage[] = [
       {
         role: 'user',
         content: [
           { type: 'text', text: PROMPTS.IMAGE_ANALYSIS },
-          { type: 'image_url', image_url: { url: `data:${file.type};base64,${base64}` } },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
         ],
       },
     ];
@@ -436,13 +497,10 @@ export async function analyzeMedicineImage(file: File): Promise<ImageAnalysisRes
       notes,
     };
   } catch (error) {
+    // Propagate the error so the page can display a proper error state
+    // instead of silently showing mock data with a buried error message.
     console.error('[GIMINI] analyzeMedicineImage failed:', error);
-    const mock = mockImageResult(file.name);
-    return {
-      ...mock,
-      notes: `خطأ أثناء الاتصال بالذكاء الاصطناعي: ${error instanceof Error ? error.message.slice(0, 120) : 'خطأ غير معروف'}`,
-      confidence: 0,
-    };
+    throw error;
   }
 }
 
